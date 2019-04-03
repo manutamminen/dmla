@@ -15,10 +15,12 @@ sliding_window <- function(sequence, win_size=20)
     win_size <- win_size - 1
     split_sequence <- strsplit(sequence, split="")[[1]]
     num_chunks <- length(split_sequence) - win_size
-    acc <- vector(mode="character", length = num_chunks)
+    acc <- vector(mode = "character",
+                  length = num_chunks)
     for (i in 1:num_chunks)
     {
-        sub_seq <- paste(split_sequence[i : (i + win_size)], collapse="")
+        sub_seq <- paste(split_sequence[i : (i + win_size)],
+                         collapse = "")
         acc[i] <- sub_seq
     }
     acc
@@ -101,7 +103,7 @@ nsearch search --query=probe_cands.fasta --db=Allele-dna.fa --out=probe_hits.csv
 
 * Then parse the resulting output file "probe_hits.csv" using a memory-efficient Python script
 
-#+BEGIN_SRC ipython :session
+#+BEGIN_SRC python
 import sys
 from collections import defaultdict
 
@@ -175,7 +177,7 @@ write_csv(exp_probes, "exp_probes.csv")
 
 ** Then filter out their target ranges using a memory-efficient Python script
 
-#+BEGIN_SRC ipython :session
+#+BEGIN_SRC python
 seq_acc = []
 with open("exp_probes.csv") as ep:
     next(ep)
