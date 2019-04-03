@@ -1,0 +1,241 @@
+* Import libraries and define the processing functions
+
+#+BEGIN_SRC R
+library(tidyverse)
+library(readxl)
+library(Biostrings)
+library(igraph)
+library(DECIPHER)
+library(stringi)
+library(glue)
+library(readxl)
+
+sliding_window <- function(sequence, win_size=20)
+{
+    win_size <- win_size - 1
+    split_sequence <- strsplit(sequence, split="")[[1]]
+    num_chunks <- length(split_sequence) - win_size
+    acc <- vector(mode="character", length = num_chunks)
+    for (i in 1:num_chunks)
+    {
+        sub_seq <- paste(split_sequence[i : (i + win_size)], collapse="")
+        acc[i] <- sub_seq
+    }
+    acc
+}
+
+deg_list <-
+    list(
+        'A' = 'A',
+        'T' = 'T',
+        'G' = 'G',
+        'C' = 'C',
+        '-' = '-',
+        'W' = c('A', 'T'),
+        'S' = c('C', 'G'),
+        'M' = c('A', 'C'),
+        'K' = c('G', 'T'),
+        'R' = c('A', 'G'),
+        'Y' = c('C', 'T'),
+        'B' = c('C', 'G', 'T'),
+        'D' = c('A', 'G', 'T'),
+        'H' = c('A', 'C', 'G'),
+        'V' = c('A', 'C', 'T'),
+        'N' = c('A', 'C', 'G', 'T'))
+
+expand_seq <- function(seq)
+{
+    seq_lst <-
+        strsplit(seq, "") %>%
+        unlist %>%
+        map(~deg_list[[.x]]) %>%
+        purrr::reduce(~as.vector(outer(.x, .y, paste, sep="")))
+    if (identical(seq_lst, character(0)))
+    {
+        stop("Not a DNA sequence!")
+    } else {
+        seq_lst
+    }
+}
+
+fasta_to_df <- function(filename)
+{
+    fasta <- readDNAStringSet(filename)
+    seqs <- as.character(fasta)
+    names(seqs) <- NA
+    tibble(Name = names(fasta),
+           Sequence = seqs)
+}
+
+#+END_SRC
+
+
+* Prepare the 40-mer probe candidates
+
+#+BEGIN_SRC R
+primer_candidates <-
+    fasta_to_df("Allele-dna.fa") %>% 
+    mutate(Exp = map(Sequence,
+                     sliding_window(as.character,
+                                    win_size = 40))) %>%
+    select(-Sequence) %>%
+    unnest(Exp) %>%
+    group_by(Name) %>%
+    mutate(Ix = row_number()) %>%
+    separate(Name, into=c("Prot_id"), sep=" ") %>%
+    unite(Fasta_id, Prot_id, Ix, sep="_")
+
+primer_candidates %>% 
+    mutate(Out = glue(">{Fasta_id}\n{Exp}\n")) %>% 
+    pull(Out) %>%
+    write("probe_cands.fasta")
+#+END_SRC
+
+
+* Prepare the BLAST search table
+
+#+BEGIN_SRC sh 
+nsearch search --query=probe_cands.fasta --db=Allele-dna.fa --out=probe_hits.csv --min-identity=0.8 --strand=both --max-hits=1558
+#+END_SRC
+
+
+* Then parse the resulting output file "probe_hits.csv" using a memory-efficient Python script
+
+#+BEGIN_SRC ipython :session
+import sys
+from collections import defaultdict
+
+acc = defaultdict(int)
+with open('probe_hits.csv') as fh:
+    next(fh)
+    for ix, ln in enumerate(fh):
+        broken = ln.split(",")
+        fst = broken[0].replace("WP_", "WP").split("_")[0]
+        fst = fst.replace("WP", "WP_")
+        snd = broken[1].replace("WP_", "WP").split(" ")[0]
+        snd = snd.replace("WP", "WP_")
+        qlength = int(broken[3]) - int(broken[2])
+        tlength = int(broken[5]) - int(broken[4])
+        to_acc = ",".join(sorted([fst, snd]))
+        if ((qlength == tlength) and (qlength == 39) and (fst != snd)):
+            acc[to_acc] += 1
+        if (ix % 100000 == 0):
+            print(ix)
+
+with open('probe_counts.csv', 'w') as fh:
+    for key, val in acc.items():
+        fh.write(key + "\n")
+#+END_SRC
+
+This spits out the file "probe_counts.csv"
+
+
+* Prepare the gdf file from probe_counts.csv
+
+#+BEGIN_SRC R :session
+
+con2 <- read_csv("probe_counts.csv", col_names=FALSE) %>%
+    unite(Netw, X1, X2, sep=",") %>%
+    pull(Netw)
+
+annotation <- read.delim("Allele.tab", sep="\t") %>%
+    separate(allele_name, into=c("type"), sep="-", remove=FALSE) %>%
+    mutate(size = stop - start) %>%
+    select(protein_accession, type, size) %>%
+    with(paste(protein_accession, type, size, sep=","))
+
+gdf <- c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE",
+         annotation,
+         "edgedef>node1 VARCHAR,node2 VARCHAR",
+         con2)
+         
+write(gdf, "clusters.gdf")
+
+#+END_SRC
+
+
+* Prepare also the gdf such that our primer designs are also shown in the network
+
+** Start by expanding our probe designs (all_probes.xlsx) into non-degenerate versions
+
+#+BEGIN_SRC R :session
+
+all_probes <-
+    read_excel("all_probes.xlsx", sheet = "probes")
+
+exp_probes <- 
+    all_probes %>%
+    mutate(Exp = map(Target, expand_seq)) %>%
+    unnest
+
+write_csv(exp_probes, "exp_probes.csv")
+
+#+END_SRC
+
+
+** Then filter out their target ranges using a memory-efficient Python script
+
+#+BEGIN_SRC ipython :session
+seq_acc = []
+with open("exp_probes.csv") as ep:
+    next(ep)
+    for ix, line in enumerate(ep):
+        seq = line.split(",")[4].strip()
+        seq_acc.append(seq)
+seq_set = set(seq_acc)
+
+probe_acc = []
+with open("probe_hits.csv") as ph:
+    next(ph)
+    for ix, line in enumerate(ph):
+        seq = line.split(",")[6]
+        if seq in seq_set:
+            probe_acc.append(line)
+            print("JEP")
+        if (ix % 1000 == 0):
+            print(ix)
+        
+with open("selected_probe_hits.csv", "w") as out:
+    for line in probe_acc:
+        out.write(line)
+#+END_SRC
+
+
+** Process the resulting selected probe hits file "selected_probe_hits.csv" into gdf annotation
+
+#+BEGIN_SRC R :session
+selected_hits <-
+    read_csv("selected_probe_hits.csv", col_names=FALSE)
+
+probe_coverage <-
+    left_join(exp_probes, selected_hits, by=c("Exp" = "X7")) %>%
+    select(Name, X1) %>%
+    filter(complete.cases(.)) %>%
+    unique %>%
+    mutate(X1 = str_replace(X1, "WP_", "WP")) %>%
+    separate(X1, c("Seq"), "_") %>%
+    mutate(Seq = str_replace(Seq, "WP", "WP_")) %>%
+    unique %>%
+    group_by(Seq) %>%
+    summarise(Probes = paste(sort(Name), collapse=";"))
+
+con2 <- read_csv("probe_counts.csv", col_names=FALSE) %>%
+    unite(Netw, X1, X2, sep=",") %>%
+    pull(Netw)
+
+annotation <-
+    read.delim("Allele.tab", sep="\t") %>%
+    separate(allele_name, into=c("type"), sep="-", remove=FALSE) %>%
+    mutate(size = stop - start) %>%
+    select(protein_accession, type, size) %>%
+    left_join(probe_coverage, by=c("protein_accession" = "Seq")) %>%
+    with(paste(protein_accession, type, size, Probes, sep=","))
+
+gdf <- c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE,probe VARCHAR",
+         annotation,
+         "edgedef>node1 VARCHAR,node2 VARCHAR",
+         con2)
+         
+write(gdf, "clusters.gdf")
+#+END_SRC
+
