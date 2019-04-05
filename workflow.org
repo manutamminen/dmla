@@ -156,7 +156,7 @@ write(gdf, "clusters.gdf")
 #+END_SRC
 
 
-* Prepare also the gdf such that our primer designs are also shown in the network
+* Figure 1: Prepare also the gdf such that our primer designs are also shown in the network
 
 ** Start by expanding our probe designs (all_probes.xlsx) into non-degenerate versions
 
@@ -240,4 +240,852 @@ gdf <- c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE,probe VARCHAR",
          
 write(gdf, "clusters.gdf")
 #+END_SRC
+
+
+* Figure 3:
+  
+** Prepare the joined reads and quality filter using nsearch
+
+#+BEGIN_SRnsearch merge --forward=NG-13024_1_lib236478_5794_7_1.fastq.gz --reverse=NG-13024_1_lib236478_5794_7_2.fastq.gz --out=NG-13024_1.fastq
+nsearch merge --forward=NG-13024_2_lib236479_5794_7_1.fastq.gz --reverse=NG-13024_2_lib236479_5794_7_2.fastq.gz --out=NG-13024_2.fastq
+nsearch merge --forward=NG-13024_3_lib236480_5794_7_1.fastq.gz --reverse=NG-13024_3_lib236480_5794_7_2.fastq.gz --out=NG-13024_3.fastq
+nsearch merge --forward=NG-13024_4_lib237853_5794_7_1.fastq.gz --reverse=NG-13024_4_lib237853_5794_7_2.fastq.gz --out=NG-13024_4.fastq
+nsearch merge --forward=NG-13024_5_lib237854_5794_7_1.fastq.gz --reverse=NG-13024_5_lib237854_5794_7_2.fastq.gz --out=NG-13024_5.fastq
+nsearch merge --forward=NG-13024_6_lib237855_5794_7_1.fastq.gz --reverse=NG-13024_6_lib237855_5794_7_2.fastq.gz --out=NG-13024_6.fastq
+
+ls *.fastq | grep -v lib | while read file; do nsearch filter --in $file --out filt_$file; done
+#+END_SRC
+
+** Process the quality-filtered sequences into count tables
+
+#+BEGIN_SRC ipython :session
+
+import os
+import epride as ep
+import pandas as pd
+from collections import defaultdict
+
+## Prepare read counts
+
+fasta_files = [i for i in os.listdir() if "filt" in i and "fasta" in i[-5:]]
+
+for fasta_file in fasta_files:
+    print(fasta_file)
+    output_file = fasta_file + ".txt"
+    len_counter = defaultdict(int)
+    for seq_id, seq in ep.read_fasta(fasta_file):
+        len_counter[len(seq)] += 1
+    pd.Series(len_counter).to_csv(output_file)
+
+
+## Prepare the template signatures
+
+C0_1b_oh2_L = "CCCTTWTTCCCTTTYTTGCG"
+C0_3b_oh2_L = "TAAGCCCTCCCGTATCGTAK"
+C1_2b_oh2_L = "ATCARGATTTASCTCGTCGT"
+C1_3b_oh2_L = "CCVACAAGTRGGYTGGTTAA"
+C2_2_oh2_L = "GCCGYCATTACCRTGAGCGA"
+C2_3_oh2_L = "CTGYCGGCGGGCTGGTTTAT"
+C3_1b_oh2_L = "AGTCACKCARCAWACKCTGT"
+C3_2b_oh2_L = "GCRCTAARMGWYTTTAYKCT"
+C4_1_oh2_L = "CCATCAGCCTGAAAGGARAA"
+C4_2_oh2_L = "CARCCTGCTCGACCTCGCGA"
+C5_1_oh2_L = "AGTTCACGCTSATGGCGACG"
+C5_3_oh2_L = "CCACCAAYGATATCGCGGTG"
+C6_1_oh2_L = "TATRATGTRCCNGGTATGGC"
+C6_2_oh2_L = "TCAGARCARATYGTGATGAA"
+C7_2_oh2_L = "ARCCHCTYARNCTGRACCAT"
+C7_3_oh2_L = "AAGMRBMRCATTWCGCCWGG"
+C8_2_oh2_L = "GRAGGCGTGACGGCTTTTGC"
+C8_3_oh2_L = "CGTCTGGATCGCACTGAABV"
+C10_1_oh2_L = "CGAARAACACRGYRGCMCTT"
+C10_2_oh2_L = "CGCACTTYCATGACGAYCGM"
+C13_1_oh2_L = "AGCAGCTSAGATCGGTGTTG"
+C13_3_oh2_L = "GCCTCTGTCGGTCAAGTTAT"
+C14_2_oh2_L = "GTCARYGAGCAGACSCTGTT"
+C14_3_oh2_L = "GATVGSCRTCGTCATGCTGG"
+C15_1_oh2_L = "AAGTTATTCCTGTTGGYTGG"
+C15_2_oh2_L = "ACCATGCTAAGCGAYATGGA"
+C9_1b_oh2_L = "WTRARARTYGARARRCTYGA"
+C9_2b_oh2_L = "TTTYCATRGYGAYAGYDCRG"
+C9_3b_oh2_L = "GGAATWGRRTGGCTTAAYTC"
+C12_1b_oh2_L = "MMGARGAARTYTATGGVAAT"
+C12_2b_oh2_L = "AYGGHCARAARCGYTTRTTT"
+C12_3b_oh2_L = "YTTRTTTCCYGAYTGGRAAA"
+
+C0_1b_oh2_R = "GCWTTTTGCVTTCCTGTTTT"
+C0_3b_oh2_R = "TTATBTACAYGACGGKGRGT"
+C1_2b_oh2_R = "ATTGGRCTTGARCTYATGTC"
+C1_3b_oh2_R = "CTGRATSGRTTGTTMRGCCT"
+C2_2_oh2_R = "TAACAGCGYCGCCAATYTGC"
+C2_3_oh2_R = "CGCCGATARGRCCGGAGCTR"
+C3_1b_oh2_R = "TTGARYTMGGNTCGGTYAGT"
+C3_2b_oh2_R = "AACTCCAGCATTGGTCTKTT"
+C4_1_oh2_R = "CCGCATTACTTCAGCTATGG"
+C4_2_oh2_R = "CCTATACCGCCGGCGGCTTG"
+C5_1_oh2_R = "GCARCCGTCACGCTGTTRTT"
+C5_3_oh2_R = "ATYTGGCCAAAAGATCGTGC"
+C6_1_oh2_R = "YGTGGGBGTYATTCARAATA"
+C6_2_oh2_R = "RCCTAATAAAGTGACYGCYA"
+C7_2_oh2_R = "ACHTGGATTAACGTBCCSAA"
+C7_3_oh2_R = "GGVTAYCGYGABGGTAARGC"
+C8_2_oh2_R = "CCGCKMGATCGGCGATGAGA"
+C8_3_oh2_R = "TACGCWGAATACCGCCATTC"
+C10_1_oh2_R = "CTCGCGGAGATTGARAAGCA"
+C10_2_oh2_R = "GTCGGYGGMGTTGATGYCCT"
+C13_1_oh2_R = "CGATCGTCGATCCCCAAGGA"
+C13_3_oh2_R = "TACACAACTCATCCTGAGCA"
+C14_2_oh2_R = "CGAKATWGGVTCSGTSAGCA"
+C14_3_oh2_R = "CCAAYCGCAACTMYCCYAWC"
+C15_1_oh2_R = "GCTGATGGTTTRCTCAACTG"
+C15_2_oh2_R = "BAGCGGCAAACTCAACAAAA"
+C9_1b_oh2_R = "VRAHGRYGTTTWTSTTCATA"
+C9_2b_oh2_R = "SNGGAATWGRRTGGCTTAAY"
+C9_3b_oh2_R = "TCRRTCVATYYCMACRTATG"
+C12_1b_oh2_R = "GATVTDAAAAGRKCAYCAAC"
+C12_2b_oh2_R = "CCYGAYTGGRAAAARGAYAT"
+C12_3b_oh2_R = "ARGAYATGACNYTRRGYRAT"
+
+C_0_1 = C0_1b_oh2_L + C0_1b_oh2_R 
+C_0_2 = C0_3b_oh2_L + C0_3b_oh2_R 
+C_1_1 = C1_2b_oh2_L + C1_2b_oh2_R 
+C_1_2 = C1_3b_oh2_L + C1_3b_oh2_R 
+C_2_1 = C2_2_oh2_L + C2_2_oh2_R 
+C_2_2 = C2_3_oh2_L + C2_3_oh2_R 
+C_3_1 = C3_1b_oh2_L + C3_1b_oh2_R 
+C_3_2 = C3_2b_oh2_L + C3_2b_oh2_R 
+C_4_1 = C4_1_oh2_L + C4_1_oh2_R 
+C_4_2 = C4_2_oh2_L + C4_2_oh2_R 
+C_5_1 = C5_1_oh2_L + C5_1_oh2_R 
+C_5_2 = C5_3_oh2_L + C5_3_oh2_R 
+C_6_1 = C6_1_oh2_L + C6_1_oh2_R 
+C_6_2 = C6_2_oh2_L + C6_2_oh2_R 
+C_7_1 = C7_2_oh2_L + C7_2_oh2_R 
+C_7_2 = C7_3_oh2_L + C7_3_oh2_R 
+C_8_1 = C8_2_oh2_L + C8_2_oh2_R 
+C_8_2 = C8_3_oh2_L + C8_3_oh2_R 
+# C_9_1 = C9_1b_oh2_L + C9_1b_oh2_R 
+C_9_1 = C9_2b_oh2_L + C9_2b_oh2_R
+C_9_2 = C9_3b_oh2_L + C9_3b_oh2_R
+C_10_1 = C10_1_oh2_L + C10_1_oh2_R 
+C_10_2 = C10_2_oh2_L + C10_2_oh2_R 
+# C_12_1 = C12_1b_oh2_L + C12_1b_oh2_R 
+C_12_1 = C12_2b_oh2_L + C12_2b_oh2_R 
+C_12_2 = C12_3b_oh2_L + C12_3b_oh2_R 
+C_13_1 = C13_1_oh2_L + C13_1_oh2_R 
+C_13_2 = C13_3_oh2_L + C13_3_oh2_R 
+C_14_1 = C14_2_oh2_L + C14_2_oh2_R 
+C_14_2 = C14_3_oh2_L + C14_3_oh2_R 
+C_15_1 = C15_1_oh2_L + C15_1_oh2_R 
+C_15_2 = C15_2_oh2_L + C15_2_oh2_R 
+
+template_names = ["C_0_1", "C_0_2", "C_1_1", "C_1_2", "C_2_1", "C_2_2", "C_3_1", "C_3_2", "C_4_1", "C_4_2", "C_5_1", "C_5_2", "C_6_1", "C_6_2", "C_7_1", "C_7_2", "C_8_1", "C_8_2", "C_9_1", "C_9_2", "C_10_1", "C_10_2", "C_12_1", "C_12_2", "C_13_1", "C_13_2", "C_14_1", "C_14_2", "C_15_1", "C_15_2"]
+
+## Prepare the sample id dictionaries
+
+template_dictionary = {}
+for t_name in template_names:
+    seq_list = ep.expand_primers(globals()[t_name])
+    for seq in seq_list:
+        template_dictionary[seq] = t_name
+
+sample_id_dict = {"ATAAGAC": "bc1",
+                  "GAACACA": "bc2",
+                  "ACATTCA": "bc3",
+                  "TCGCTAG": "bc4",
+                  "ATCATTA": "bc5",
+                  "TGTATGT": "bc6",
+                  "TAAGATA": "bc7",
+                  "CGTTTCA": "bc8",
+                  "ACGTTGC": "bc9",
+                  "TAGATGA": "bc10"}
+
+smp1 = {"bc1": "1_a",
+        "bc2": "2_a",
+        "bc3": "3_a",
+        "bc4": "4_a",
+        "bc5": "5_a",
+        "bc6": "6_a",
+        "bc7": "7_a",
+        "bc8": "8_a",
+        "bc9": "9_a",
+        "bc10": "10_b"}
+
+smp2 = {"bc1": "1_b",
+        "bc2": "2_b",
+        "bc3": "3_b",
+        "bc4": "4_b",
+        "bc5": "5_b",
+        "bc6": "6_b",
+        "bc7": "7_b",
+        "bc8": "8_b",
+        "bc9": "9_b",
+        "bc10": "11_a"}
+
+smp3 = {"bc1": "NA",
+        "bc2": "2_c",
+        "bc3": "3_c",
+        "bc4": "4_c",
+        "bc5": "5_c",
+        "bc6": "6_c",
+        "bc7": "7_c",
+        "bc8": "8_c",
+        "bc9": "10_a",
+        "bc10": "11_b"}
+
+smp4 = {"bc1": "13_a",
+        "bc2": "14_a",
+        "bc3": "15_a",
+        "bc4": "16_a",
+        "bc5": "17_a",
+        "bc6": "18_a",
+        "bc7": "19_a",
+        "bc8": "20_a",
+        "bc9": "NA",
+        "bc10": "NA"}
+
+smp5 = {"bc1": "13_b",
+        "bc2": "14_b",
+        "bc3": "15_b",
+        "bc4": "16_b",
+        "bc5": "17_b",
+        "bc6": "18_b",
+        "bc7": "19_b",
+        "bc8": "20_b",
+        "bc9": "NA",
+        "bc10": "NA"}
+
+smp6 = {"bc1": "13_c",
+        "bc2": "14_c",
+        "bc3": "15_c",
+        "bc4": "16_c",
+        "bc5": "17_c",
+        "bc6": "18_c",
+        "bc7": "19_c",
+        "bc8": "20_c",
+        "bc9": "NA",
+        "bc10": "NA"}
+
+sample_type_dict = {"filt_NG-13024_1": smp1,
+                    "filt_NG-13024_2": smp2,
+                    "filt_NG-13024_3": smp3,
+                    "filt_NG-13024_4": smp4,
+                    "filt_NG-13024_5": smp5,
+                    "filt_NG-13024_6": smp6}
+
+## Filter the sequences and identify the template signatures
+
+def seq_predicate(seq):
+    if len(seq) == 178 and \
+       seq[:33] == "TCTTTTCGCAGGCTGGAGCCCAGGTCTTCCTAT" and \
+       seq[40:60] == "TGGGCCCAATTTTCCGTGAC" and \
+       seq[118:] == "GAATGAGTGTGCGTGCACTCTCATTGGGTTTGAGATAAGGTACCGAGAAGGCGGAACCCA" and \
+       seq[33:40] in sample_id_dict:
+        return True
+
+def seq_parser(fasta_file):
+    trunc_fasta_file = fasta_file.split(".")[0]
+    for seq_id, seq in ep.read_fasta(fasta_file):
+        if seq_predicate(seq):
+            bc = seq[33:40]
+            mid_part = seq[60:118]
+            mol_id = mid_part[-10:]
+            cluster_id = mid_part[8:-10]
+            sample_id = sample_id_dict[bc]
+            sample_type = sample_type_dict[trunc_fasta_file][sample_id]
+            if cluster_id in template_dictionary:
+                cluster = template_dictionary[cluster_id]
+                yield [sample_id, sample_type, cluster, mol_id]
+
+def get_count_table(fasta_file):
+    print(fasta_file)
+    seq_iter = seq_parser(fasta_file)
+    seq_series = pd.DataFrame(seq_iter, columns=['Primer_barcode',
+                                                 'Sample_type',
+                                                 'Molecule_type',
+                                                 'Molecule_barcode'])
+    seq_table = seq_series.groupby(seq_series.columns.tolist(),
+                                   as_index=False).size().rename("Count").reset_index()
+    seq_table['File'] = fasta_file.split(".")[0]
+    return seq_table
+
+def get_non_aggr_count_table(fasta_file):
+    print(fasta_file)
+    seq_iter = seq_parser(fasta_file)
+    seq_series = pd.DataFrame(seq_iter, columns=['Primer_barcode',
+                                                 'Sample_type',
+                                                 'Molecule_type',
+                                                 'Molecule_barcode'])
+    seq_series['File'] = fasta_file.split(".")[0]
+    return seq_series
+
+acc = [get_count_table(tbl) for tbl in fasta_files]
+mol_counts = pd.concat(acc)
+mol_counts = mol_counts.loc[mol_counts['Sample_type'] != 'NA']
+mol_counts.to_csv("mol_bc_counts.csv", index=False)
+
+acc = [get_non_aggr_count_table(tbl) for tbl in fasta_files]
+mol_counts = pd.concat(acc)
+mol_counts = mol_counts.loc[mol_counts['Sample_type'] != 'NA']
+mol_counts.to_csv("mol_bcs.csv", index=False)
+
+#+END_SRC
+
+** Then plot the count table
+
+#+BEGIN_SRC R :session
+library(data.table)
+library(plyr)
+library(tidyverse)
+library(iNEXT)
+
+setwd("/Users/manutamminen/Scratch/MLA")
+
+
+
+## Input and clean up the count and barcode data
+mol_bc_counts <- fread("mol_bc_counts.csv")
+mol_bc_counts[, c("Sample", "Sample_replicate") := tstrsplit(Sample_type, "_", fixed=TRUE)]
+mol_bc_counts[, c("Stuffer", "Molecule_target", "Molecule_replicate") := tstrsplit(Molecule_type, "_", fixed=TRUE)]
+mol_bc_counts <- mol_bc_counts[!(Molecule_target %in% c(9,12))]
+
+mol_counts <- mol_bc_counts[, .(Tot_reads=sum(Count), Count=.N), by=.(Sample, Sample_replicate, Molecule_target, Molecule_replicate)]
+mol_counts[, Molecule_target := factor(Molecule_target, levels=as.character(c(0:10, 12:15)))]
+mol_counts[, Sample := factor(Sample, levels=as.character(c(1:11, 13:20)))]
+
+
+
+
+
+
+
+## Prepare standard curves for the different molecular targets
+detection_limits <- mol_counts[Sample %in% c(3, 19, 20), .(Mean=mean(Count), Sd=sd(Count)), by=.(Molecule_target, Molecule_replicate)][, .(Molecule_target, Mean, Sd, Detlim = Mean + 3*Sd)]
+
+concs <- fread("conc_gradient.csv")
+std_counts <- mol_bc_counts[Sample %in% 9:11,
+                           .(Count=.N),
+                           by=.(Sample, Sample_replicate,
+                                Molecule_target, Molecule_replicate)]
+numeric_cols <- names(mol_counts)[c(1, 3, 4)]
+std_counts[, (numeric_cols) := lapply(.SD, as.numeric), .SDcols=numeric_cols]
+conc_counts <- merge(concs, std_counts, by=c("Sample", "Molecule_target", "Molecule_replicate"))
+conc_counts[, Molecule_target := as.factor(Molecule_target)]
+
+pdf("std_curves.pdf")
+ggplot(conc_counts, aes(x=Molecule_concentration, y=Count, color=Molecule_target)) + geom_point() + geom_smooth(method='lm')
+dev.off()
+
+pdf("log_log.pdf")
+ggplot(conc_counts, aes(x=Molecule_concentration, y=Count, color=Molecule_target)) + geom_point() + geom_smooth(method='lm') + scale_x_log10() + scale_y_log10()
+dev.off()
+
+pdf("log_log2.pdf", useDingbats = FALSE)
+ggplot(conc_counts, aes(x=Molecule_concentration, y=Count, color=Molecule_target)) + geom_point() + geom_smooth(method='lm', se=FALSE) + facet_grid(.~Molecule_replicate)+ scale_x_log10() + scale_y_log10() + theme_bw()
+dev.off()
+
+
+pdf("std_log_log_detection_limits.pdf")
+ggplot(conc_counts, aes(x=Molecule_concentration, y=Count, color=Molecule_target)) + geom_point() + geom_hline(yintercept = range(10.6, 136.8)) + geom_smooth(method='lm') + scale_x_log10() + scale_y_log10()
+dev.off()
+
+
+ggplot(conc_counts, aes(x=Molecule_concentration, y=Count, color=Molecule_target)) + geom_point() + geom_smooth(method='lm', se=FALSE) + facet_grid(.~Molecule_replicate)+ scale_x_log10() + scale_y_log10() + theme_bw()
+
+ggplot(conc_counts, aes(x=Molecule_concentration, y=Count)) + geom_point() + geom_smooth(method='lm', se=FALSE) + facet_grid(Molecule_target~Molecule_replicate, scales="free") + scale_x_log10() + theme_bw()
+
+
+
+conc_counts2 <- unite(conc_counts, Tar_Rep, Molecule_target, Molecule_replicate, sep="_", remove=FALSE)
+conc_counts2 <- filter(conc_counts2, Tar_Rep %in% c("5_1","6_1","7_1","13_1","14_1","15_1","0_2","1_2","3_2","4_2","7_2","8_2","10_2","13_2","14_2","15_2"))
+
+
+conc_counts2 <- unite(conc_counts, Tar_Rep, Molecule_target, Molecule_replicate, sep="_", remove=FALSE)
+conc_counts2 <- filter(conc_counts2, Tar_Rep %in% c("6_1","13_1","14_1","15_1","1_2","8_2","14_2","15_2"))
+
+
+ggplot(conc_counts2, aes(x=Molecule_concentration, y=Count, color=Tar_Rep)) + geom_point() + geom_smooth(method='lm', se=FALSE) + scale_x_log10() + scale_y_log10() + theme_bw()
+
+
+ggplot(conc_counts2, aes(x=Molecule_concentration, y=Count, color=Tar_Rep)) + geom_point() + geom_smooth(method='lm', se=FALSE) + geom_hline(yintercept = range(10.6, 136.8)) + scale_x_log10() + scale_y_log10() + theme_bw()
+
+
+
+
+
+
+## Prepare the box plots of the different treatments.
+pdf("samples_1ab.pdf")
+tr_mol_counts <- mol_counts[Sample %in% 1,]
+ggplot(tr_mol_counts, aes(x=Molecule_target, y=Count, color=Sample_replicate)) + geom_point() + facet_grid(Molecule_replicate~.)+ theme(legend.position="none")
+dev.off()
+
+pdf("samples_3-8.pdf")
+tr_mol_counts <- mol_counts[Sample %in% 3:8,]
+ggplot(tr_mol_counts, aes(x=Molecule_target, y=Count, color=Molecule_replicate)) + geom_boxplot() + facet_grid(Sample~.) + theme_bw() + theme(legend.position="none")
+dev.off()
+
+pdf("samples_9-11.pdf")
+tr_mol_counts <- mol_counts[Sample %in% 9:11,]
+ggplot(tr_mol_counts, aes(x=Molecule_target, y=Count, color=Molecule_replicate)) + geom_boxplot() + facet_grid(Sample~.) + theme(legend.position="none")
+dev.off()
+
+pdf("samples_13-20.pdf")
+tr_mol_counts <- mol_counts[Sample %in% 13:20,]
+ggplot(tr_mol_counts, aes(x=Molecule_target, y=Count, color=Molecule_replicate)) + geom_boxplot() + facet_grid(Sample~.) + theme(legend.position="none")
+dev.off()
+
+
+
+
+
+
+
+
+
+
+
+## Check whether probe multiplexing affects probe performance
+mult_mol_counts <- mol_counts[Sample %in% c(2, 4:8)]
+mult_mol_counts[, Multiplexing := factor(Sample)]
+levels(mult_mol_counts$Multiplexing) <- c("30", "15", "15", "10", "10", "10")
+filt_mol_counts <- mult_mol_counts[(Sample == 2) |
+                                  (Sample == 4 & Molecule_target %in% 0:7) |
+                                  (Sample == 5 & Molecule_target %in% c(8, 10, 13:15)) |
+                                  (Sample == 6 & Molecule_target %in% 0:4) |
+                                  (Sample == 7 & Molecule_target %in% 5:8) |
+                                  (Sample == 8 & Molecule_target %in% c(10, 13:15))]
+
+filt_mol_counts[, Ratio := Count / Tot_reads]
+
+pdf("pooling_effect.pdf")
+ggplot(filt_mol_counts, aes(x=Molecule_target, y=Ratio, color=Multiplexing)) + geom_boxplot() + facet_grid(Molecule_replicate~.)
+dev.off()
+
+
+
+
+
+
+
+
+
+
+## Plot the read lenght distribution
+count_files <- list.files(pattern = "\\.txt$")
+count_list <- lapply(count_files, function(x) fread(x))
+names(count_list) <- count_files
+count_frame <- melt(count_list, id.vars = c("V1", "V2"))
+pdf("read_lengths.pdf")
+ggplot(count_frame, aes(x=V1, y=V2, fill=L1)) + geom_bar(stat="identity", position="dodge")
+dev.off()
+
+
+
+
+
+
+
+
+
+
+## Prepare rarefaction curves for different sequencing cases.
+
+filt_mol_counts <- mol_bc_counts[(Sample == 2) |
+                                (Sample == 4 & Molecule_target %in% 0:7) |
+                                (Sample == 5 & Molecule_target %in% c(8, 10, 13:15)) |
+                                (Sample == 6 & Molecule_target %in% 0:4) |
+                                (Sample == 7 & Molecule_target %in% 5:8) |
+                                (Sample == 8 & Molecule_target %in% c(10, 13:15))]
+bc_lists <- dlply(filt_mol_counts, .(Sample, Molecule_target, Molecule_replicate), function(x) x$Count)
+rarefaction_list <- llply(bc_lists, function(x) iNEXT(x, q=0, datatype="abundance"), .progress = "text")
+## Takes a long time to run. Commented to prevent accidental execution
+rarefaction_table_list <- llply(rarefaction_list, function(x) fortify(x, type=1))
+rarefaction_tables <- melt(rarefaction_table_list, id.vars=c("datatype", "plottype", "site", "method", "order", "x", "y", "y.lwr", "y.upr")) %>% data.table
+rarefaction_tables[, c("Sample", "Molecule_target", "Molecule_replicate") := tstrsplit(L1, ".", fixed=TRUE)]
+rarefaction_tables.point <- rarefaction_tables[which(rarefaction_tables$method=="observed"),]
+rarefaction_tables.line <- rarefaction_tables[which(rarefaction_tables$method!="observed"),]
+rarefaction_tables.line$method <- factor(rarefaction_tables.line$method, 
+                         c("interpolated", "extrapolated"),
+                         c("interpolation", "extrapolation"))
+rarefaction_tables <- rarefaction_tables[method == "interpolated"]
+ 
+pdf("rarefaction.pdf")
+ggplot(rarefaction_tables, aes(x=x, y=y, colour=Molecule_target)) + 
+  geom_line(aes(group=L1), data=rarefaction_tables.line) +
+  geom_abline(intercept = 0, slope = 1, linetype="dashed") +
+  facet_grid(Sample ~ Molecule_replicate, scales="free") + 
+  labs(x="Number of sampled barcodes", y="Barcode diversity")
+dev.off()
+
+
+
+
+
+## Preparing the count histograms of the sampled barcodes
+filt_mol_counts <- mol_bc_counts[(Sample == 2) |
+                                (Sample == 4 & Molecule_target %in% 0:7) |
+                                (Sample == 5 & Molecule_target %in% c(8, 10, 13:15)) |
+                                (Sample == 6 & Molecule_target %in% 0:4) |
+                                (Sample == 7 & Molecule_target %in% 5:8) |
+                                (Sample == 8 & Molecule_target %in% c(10, 13:15))]
+ordered_mol_counts <- dlply(filt_mol_counts, .(Sample, Molecule_target, Molecule_replicate), function(x) {
+    counts <- sort(x$Count, decreasing = TRUE)
+    df <- data.frame(BC=1:length(counts), Count=counts)
+    return(df)
+} ) %>% melt(id.vars=c("BC", "Count")) %>% data.table
+ordered_mol_counts[, c("Sample", "Molecule_target", "Molecule_replicate") := tstrsplit(L1, ".", fixed=TRUE)]
+
+pdf("bc_sampling.pdf")
+ggplot(ordered_mol_counts, aes(x=BC, y=Count, color=Sample, fill=Sample)) + geom_density(stat="identity", alpha=0.2) + facet_grid(Molecule_target~Molecule_replicate)
+dev.off()
+
+
+pdf("bc_sampling_sample.pdf")
+ggplot(ordered_mol_counts, aes(x=BC, y=Count, color=Molecule_target, fill=Molecule_target)) + geom_density(stat="identity", alpha=0.2) + facet_grid(Sample~Molecule_replicate)
+dev.off()
+
+
+
+
+
+## Prepare rarefaction curves for the dilution-to-extinction-samples
+mol_bc_counts <- fread("mol_bc_counts.csv")
+mol_bc_counts[, c("Sample", "Sample_replicate") := tstrsplit(Sample_type, "_", fixed=TRUE)]
+mol_bc_counts[, c("Stuffer", "Molecule_target", "Molecule_replicate") := tstrsplit(Molecule_type, "_", fixed=TRUE)]
+mol_bc_counts <- mol_bc_counts[!(Molecule_target %in% c(9,12))]
+mol_bc_counts <- mol_bc_counts[Sample %in% 9:11]
+
+concs <- fread("conc_gradient.csv")
+
+bc_lists <- dlply(mol_bc_counts, .(Sample, Molecule_target, Molecule_replicate), function(x) x$Count)
+
+rarefaction_list <- llply(bc_lists, function(x) iNEXT(x, q=0, datatype="abundance"), .progress = "text")
+
+rarefaction_table_list <- llply(rarefaction_list, function(x) fortify(x, type=1))
+rarefaction_tables <- melt(rarefaction_table_list, id.vars=c("datatype", "plottype", "site", "method", "order", "x", "y", "y.lwr", "y.upr")) %>% data.table
+rarefaction_tables[, c("Sample", "Molecule_target", "Molecule_replicate") := tstrsplit(L1, ".", fixed=TRUE)]
+numeric_cols <- names(rarefaction_tables)[c(11, 12, 13)]
+rarefaction_tables[, (numeric_cols) := lapply(.SD, as.numeric), .SDcols=numeric_cols]
+conc_counts <- merge(concs, rarefaction_tables, by=c("Sample", "Molecule_target", "Molecule_replicate"))
+conc_counts[, Molecule_target := as.factor(Molecule_target)]
+conc_counts.point <- conc_counts[which(conc_counts$method=="observed"),]
+conc_counts.line <- conc_counts[which(conc_counts$method!="observed"),]
+conc_counts.line$method <- factor(conc_counts.line$method, 
+                         c("interpolated", "extrapolated"),
+                         c("interpolation", "extrapolation"))
+conc_counts <- conc_counts[method == "interpolated"]
+conc_counts$Molecule_concentration <- as.factor(conc_counts$Molecule_concentration)
+conc_counts.line$Molecule_concentration <- as.factor(conc_counts.line$Molecule_concentration)
+
+
+pdf("dilution_rarefaction.pdf")
+ggplot(conc_counts, aes(x=x, y=y, colour=Molecule_concentration)) + 
+  geom_line(aes(group=L1), data=conc_counts.line) +
+  geom_abline(intercept = 0, slope = 1, linetype="dashed") +
+  facet_grid(Sample ~ ., scales="free") + 
+  labs(x="Number of sampled barcodes", y="Barcode diversity")
+dev.off()
+
+
+pdf("trunc_dilution_rarefaction.pdf")
+ggplot(conc_counts, aes(x=x, y=y, colour=Molecule_concentration)) + 
+  geom_line(aes(group=L1), data=conc_counts.line) +
+  geom_abline(intercept = 0, slope = 1, linetype="dashed") +
+  facet_grid(Sample ~ ., scales="free") + 
+    labs(x="Number of sampled barcodes", y="Barcode diversity") +
+    scale_y_continuous(limits = c(0, 800)) +
+    scale_x_continuous(limits = c(0, 750))
+dev.off()
+
+
+
+
+
+## Calculate how well the rarefaction estimates correspond with the known concentrations
+
+rarefaction_estimates <- llply(rarefaction_list, function(x) {
+    df <- data.frame(x$AsyEst)
+    df$Analysis <- c("Species_richness", "Shannon_diversity", "Simpson_diversity")
+    return(df)
+} ) %>% melt(id.vars=c("Observed", "Estimator", "Est_s.e.", "X95..Lower", "X95..Upper", "Analysis"))
+richness <- rarefaction_estimates[rarefaction_estimates$Analysis == "Species_richness",]
+concs <- fread("conc_gradient.csv")
+concs$L1 <- apply(concs[, c("Sample", "Molecule_target", "Molecule_replicate")], 1, paste, collapse = ".")
+conc_richness <- merge(concs, richness, by="L1")
+conc_richness$Sample <- as.factor(conc_richness$Sample)
+conc_richness$Molecule_target <- as.factor(conc_richness$Molecule_target)
+conc_richness$Molecule_replicate <- as.factor(conc_richness$Molecule_replicate)
+
+pdf("estimate_std.pdf")
+ggplot(conc_richness, aes(x=Molecule_concentration, y=Estimator, color=Molecule_target)) + geom_point() + geom_smooth(method='lm') + scale_x_log10() + scale_y_log10()
+dev.off()
+
+pdf("estimate_std_log_log.pdf")
+ggplot(conc_richness, aes(x=Molecule_concentration, y=Estimator, color=Molecule_target)) + geom_point() + geom_smooth(method='lm') 
+dev.off()
+
+
+
+
+
+
+
+
+
+
+
+
+## For investors
+
+mol_bc_counts <- fread("mol_bc_counts.csv")
+mol_bc_counts[, c("Sample", "Sample_replicate") := tstrsplit(Sample_type, "_", fixed=TRUE)]
+mol_bc_counts[, c("Stuffer", "Molecule_target", "Molecule_replicate") := tstrsplit(Molecule_type, "_", fixed=TRUE)]
+mol_bc_counts <- mol_bc_counts[!(Molecule_target %in% c(9,12))]
+mol_bc_counts <- mol_bc_counts[Sample %in% 9:11]
+bc_lists <- dlply(mol_bc_counts, .(Sample, Molecule_target, Molecule_replicate, Sample_replicate), function(x) x$Count)
+rarefaction_list <- llply(bc_lists, function(x) iNEXT(x, q=0, datatype="abundance"), .progress = "text")
+rarefaction_estimates <- llply(rarefaction_list, function(x) {
+    df <- data.frame(x$AsyEst)
+    df$Analysis <- c("Species_richness", "Shannon_diversity", "Simpson_diversity")
+    return(df)
+} ) %>% melt(id.vars=c("Observed", "Estimator", "Est_s.e.", "X95..Lower",
+                     "X95..Upper", "Analysis"))
+rarefaction_estimates <- separate(rarefaction_estimates, L1,
+                                 c("Sample", "Molecule_target",
+                                   "Molecule_replicate", "Sample_replicate")) %>%
+    unite(L1, Sample, Molecule_target, Molecule_replicate, sep=".")
+richness <- rarefaction_estimates[rarefaction_estimates$Analysis == "Species_richness",]
+concs <- fread("conc_gradient.csv")
+concs$L1 <- apply(concs[, c("Sample", "Molecule_target", "Molecule_replicate")], 1, paste, collapse = ".")
+conc_richness <- merge(concs, richness, by="L1")
+conc_richness$Sample <- as.factor(conc_richness$Sample)
+conc_richness$Molecule_target <- as.factor(conc_richness$Molecule_target)
+conc_richness$Molecule_replicate <- as.factor(conc_richness$Molecule_replicate)
+conc_counts2 <- unite(conc_richness, Tar_Rep, Molecule_target, Molecule_replicate, sep="_", remove=FALSE)
+conc_counts2 <- filter(conc_counts2, !(Tar_Rep %in% c("4_1", "3_1", "0_1", "6_2", "8_1")))
+
+pdf("stds.pdf", useDingbats = FALSE)
+ggplot(conc_counts2, aes(x=Molecule_concentration, y=Estimator, color=Tar_Rep)) +
+    geom_point() +
+    geom_smooth(method='lm', se=FALSE) +
+    geom_hline(yintercept = range(37.16)) +
+    geom_hline(yintercept = range(60.75), linetype="dashed") +
+    geom_hline(yintercept = range(107.93), linetype="dotted") +
+    scale_x_log10() +
+    scale_y_log10() +
+    theme_bw()
+dev.off()
+
+
+
+
+
+ggplot(conc_counts, aes(x=Molecule_concentration, y=Count, color=Molecule_target)) +
+    geom_point() +
+    geom_smooth(method='lm', se=FALSE) +
+    facet_grid(.~Molecule_replicate)+
+    geom_hline(yintercept = range(37.16)) +
+    geom_hline(yintercept = range(107.93), linetype="dashed") +
+    scale_x_log10() +
+    scale_y_log10() +
+    theme_bw()
+
+#+END_SRC
+
+* Figure 4:
+
+** With the sequencing data back, join the paired ends and quality filter using nsearch
+
+ #+BEGIN_SRC sh
+ nsearch merge --forward NG-17872_10_lib297291_6185_1_1.fastq.gz --reverse NG-17872_10_lib297291_6185_1_2.fastq.gz --out lib10.fastq
+ nsearch merge --forward NG-17872_11_lib297292_6178_3_1.fastq.gz --reverse NG-17872_11_lib297292_6178_3_2.fastq.gz --out lib11_1.fastq
+ nsearch merge --forward NG-17872_11_lib297292_6189_3_1.fastq.gz --reverse NG-17872_11_lib297292_6189_3_2.fastq.gz --out lib11_2.fastq
+
+ nsearch filter --in lib10.fastq --out lib10.fasta
+ nsearch filter --in lib11_1.fastq --out lib11_1.fasta
+ nsearch filter --in lib11_2.fastq --out lib11_2.fasta
+ #+END_SRC
+
+
+** Then process the merged, quality-filtered sequences into count tables on Python
+
+ #+BEGIN_SRC python
+ import os
+ import epride as ep
+ import pandas as pd
+ from collections import defaultdict
+
+ ## Import the data
+
+ probes = pd.ExcelFile("probes.xlsx").parse('probes')
+ pcr_bcs = pd.ExcelFile("probes.xlsx").parse('pcr_barcodes').drop('Sequence', axis=1)
+ other_sequences = pd.ExcelFile("probes.xlsx") \
+                     .parse('other_primers_and_sequences') \
+                     .set_index('Sequence_name')
+ left_side = other_sequences.loc['for_primer_5', 'Sequence']
+ middle = other_sequences.loc['left_probe_5', 'Sequence']
+ right_side = other_sequences.loc['rev_primer_rc', 'Sequence'][:20]
+
+
+ ## Create the template, sample id and bc number dictionaries
+
+ template_dictionary = {}
+ for _, row in probes.iterrows():
+     for seq in ep.expand_primers(row['Target']):
+         template_dictionary[seq] = row['Short_name']
+
+ sample_id_dict = {bc: bc_id for _, (_, bc_id, bc) in pcr_bcs.iterrows()}
+
+ sample_ix_dict = {bc: ix for _, (ix, _, bc) in pcr_bcs.iterrows()}
+
+
+ ## Define the sequence parser
+
+ def seq_parser(fasta_file):
+     for seq_id, seq in ep.read_fasta(fasta_file):
+         if (len(seq) > 133 or len(seq) < 140) and \
+         seq.count(left_side) == 1 and \
+         seq.count(middle) == 1 and \
+         seq.count(right_side) == 1:
+             cluster_id = ''
+             try:
+                 fst_half, long_mid_part = seq.split(middle)
+                 _, bc = fst_half.split(left_side)
+                 mid_part, _ = long_mid_part.split(right_side)
+                 mol_id = mid_part[-10:]
+                 cluster_id = mid_part[8:-10]
+                 if bc in sample_id_dict:
+                     sample_id = sample_id_dict[bc]
+                     sample_ix = sample_ix_dict[bc]
+             except ValueError:
+                 pass
+             if cluster_id in template_dictionary:
+                 cluster = template_dictionary[cluster_id]
+                 yield [sample_ix, sample_id, cluster, mol_id]
+
+ ## And parse the sequences into pandas DataFrames
+
+ lib10 = pd.DataFrame(seq_parser("lib10.fasta"),
+                      columns=['Sample_ix',
+                               'Sample_id',
+                               'Cluster',
+                               'Molecule_id'])
+
+ lib11_1 = pd.DataFrame(seq_parser("lib11_1.fasta"),
+                        columns=['Sample_ix',
+                                 'Sample_id',
+                                 'Cluster',
+                                 'Molecule_id'])
+
+ lib11_2 = pd.DataFrame(seq_parser("lib11_2.fasta"),
+                        columns=['Sample_ix',
+                                 'Sample_id',
+                                 'Cluster',
+                                 'Molecule_id'])
+
+ ## And write out as csvs
+
+ lib10.to_csv("lib10.csv", index=False)
+ lib11_1.to_csv("lib11_1.csv", index=False)
+ lib11_2.to_csv("lib11_2.csv", index=False)
+
+ #+END_SRC
+
+
+** Prepare visualizations of the lib10 and lib11 count tables
+
+ #+BEGIN_SRC R :session
+ library(tidyverse)
+ library(readxl)
+
+ ## Prepare count table for tube 10
+
+ lib10_counts <- read_csv("lib10.csv") %>%
+     unique %>%
+     group_by(Sample_ix, Cluster) %>%
+     summarise(n=n()) %>%
+     spread(key=Cluster, value=n, fill=0) %>%
+     ungroup %>%
+     mutate(Sample_ix = as.factor(Sample_ix)) %>%
+     gather(Cluster, Count, -Sample_ix) %>%
+     mutate(Tube = 10) %>%
+     select(Tube, Sample_ix, Cluster, Count)
+
+ ggplot(lib10_counts, aes(x=Cluster, y=Sample_ix)) +
+     geom_tile(aes(fill=Count), color="gray") +
+     scale_fill_gradient(low = "white", high = "red", na.value="white") +
+     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
+           axis.text.y = element_text(size=7))
+ ggsave("lib10.pdf", last_plot())
+
+ ## Prepare count table for tube 11
+
+ lib11_counts <- rbind(read_csv("lib11_1.csv"),
+                     read_csv("lib11_2.csv")) %>%
+     unique %>%
+     group_by(Sample_ix, Cluster) %>%
+     summarise(n=n()) %>%
+     spread(key=Cluster, value=n, fill=0) %>%
+     ungroup %>%
+     mutate(Sample_ix = as.factor(Sample_ix)) %>%
+     gather(Cluster, Count, -Sample_ix) %>%
+     mutate(Tube = 11) %>%
+     select(Tube, Sample_ix, Cluster, Count)
+
+ ggplot(lib11_counts, aes(x=Cluster, y=Sample_ix)) +
+     geom_tile(aes(fill=Count), color="gray") +
+     scale_fill_gradient(low = "white", high = "red", na.value="white") +
+     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
+           axis.text.y = element_text(size=7))
+ ggsave("lib11.pdf", last_plot())
+
+ ## Merge the count tables
+
+ lib_counts <- rbind(lib10_counts, lib11_counts)
+
+ ## Prepare a logical mask of the sample design
+
+ design <- read_excel("expanded_libraries.xlsx") %>%
+     mutate(Entry = 1) %>%
+     select(Tube, Cluster, Tube, Sample_ix, Entry) %>%
+     unique %>%
+     spread(Cluster, Entry, fill=0) %>%
+     mutate(Sample_ix = as.factor(Sample_ix)) %>%
+     gather(Cluster, Count, -Sample_ix, -Tube) %>%
+     mutate(Mask = Count > 0) %>%
+     select(-Count)
+
+ ## Merge the logical mask with the count tables
+
+ full_lib <- left_join(lib_counts,
+                       design,
+                       by=c("Tube",
+                            "Sample_ix",
+                            "Cluster")) %>%
+     mutate_if(is.logical, replace_na, FALSE) %>%
+     mutate(Cluster = as.factor(Cluster))
+
+ ## Plot as a heatmap and reverse the false positives for visual identification
+
+ mutate(full_lib,
+        Count = ifelse(Mask, Count, -Count),
+        Tube = as.factor(Tube)) %>%
+     ggplot(aes(x=Cluster, y=Sample_ix)) +
+     geom_tile(aes(fill=Count), color="gray") +
+     facet_grid(Tube~.) +
+     scale_fill_gradient2(low = "blue", high = "red", mid="white") +
+     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
+           axis.text.y = element_text(size=5))
+ ggsave("lib_complete.pdf", last_plot())
+
+ ## Summarise the clusters per sample per tube
+
+ cluster_summary <- filter(full_lib, Count > 500) %>%
+     separate(Cluster, into=c("Cluster_no", "Cluster_repl"), sep="_") %>%
+     select(-Cluster_repl, -Mask, -Count) %>%
+     group_by(Tube, Sample_ix) %>%
+     summarise(Clusters = paste(unique(Cluster_no), collapse=","))
+ write_delim(cluster_summary, "cluster_summary.csv", delim=";")
+ #+END_SRC
 
