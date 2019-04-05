@@ -248,7 +248,8 @@
   
 ** Prepare the joined reads and quality filter using nsearch
 
-#+BEGIN_SRnsearch merge --forward=NG-13024_1_lib236478_5794_7_1.fastq.gz --reverse=NG-13024_1_lib236478_5794_7_2.fastq.gz --out=NG-13024_1.fastq
+#+BEGIN_SRC sh
+nsearch merge --forward=NG-13024_1_lib236478_5794_7_1.fastq.gz --reverse=NG-13024_1_lib236478_5794_7_2.fastq.gz --out=NG-13024_1.fastq
 nsearch merge --forward=NG-13024_2_lib236479_5794_7_1.fastq.gz --reverse=NG-13024_2_lib236479_5794_7_2.fastq.gz --out=NG-13024_2.fastq
 nsearch merge --forward=NG-13024_3_lib236480_5794_7_1.fastq.gz --reverse=NG-13024_3_lib236480_5794_7_2.fastq.gz --out=NG-13024_3.fastq
 nsearch merge --forward=NG-13024_4_lib237853_5794_7_1.fastq.gz --reverse=NG-13024_4_lib237853_5794_7_2.fastq.gz --out=NG-13024_4.fastq
