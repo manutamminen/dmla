@@ -1,248 +1,250 @@
-* Import libraries and define the processing functions
+* Figure 1
 
-#+BEGIN_SRC R
-library(tidyverse)
-library(readxl)
-library(Biostrings)
-library(igraph)
-library(DECIPHER)
-library(stringi)
-library(glue)
-library(readxl)
+** Import libraries and define the processing functions
 
-sliding_window <- function(sequence, win_size=20)
-{
-    win_size <- win_size - 1
-    split_sequence <- strsplit(sequence, split="")[[1]]
-    num_chunks <- length(split_sequence) - win_size
-    acc <- vector(mode = "character",
-                  length = num_chunks)
-    for (i in 1:num_chunks)
-    {
-        sub_seq <- paste(split_sequence[i : (i + win_size)],
-                         collapse = "")
-        acc[i] <- sub_seq
-    }
-    acc
-}
+ #+BEGIN_SRC R
+ library(tidyverse)
+ library(readxl)
+ library(Biostrings)
+ library(igraph)
+ library(DECIPHER)
+ library(stringi)
+ library(glue)
+ library(readxl)
 
-deg_list <-
-    list(
-        'A' = 'A',
-        'T' = 'T',
-        'G' = 'G',
-        'C' = 'C',
-        '-' = '-',
-        'W' = c('A', 'T'),
-        'S' = c('C', 'G'),
-        'M' = c('A', 'C'),
-        'K' = c('G', 'T'),
-        'R' = c('A', 'G'),
-        'Y' = c('C', 'T'),
-        'B' = c('C', 'G', 'T'),
-        'D' = c('A', 'G', 'T'),
-        'H' = c('A', 'C', 'G'),
-        'V' = c('A', 'C', 'T'),
-        'N' = c('A', 'C', 'G', 'T'))
+ sliding_window <- function(sequence, win_size=20)
+ {
+     win_size <- win_size - 1
+     split_sequence <- strsplit(sequence, split="")[[1]]
+     num_chunks <- length(split_sequence) - win_size
+     acc <- vector(mode = "character",
+                   length = num_chunks)
+     for (i in 1:num_chunks)
+     {
+         sub_seq <- paste(split_sequence[i : (i + win_size)],
+                          collapse = "")
+         acc[i] <- sub_seq
+     }
+     acc
+ }
 
-expand_seq <- function(seq)
-{
-    seq_lst <-
-        strsplit(seq, "") %>%
-        unlist %>%
-        map(~deg_list[[.x]]) %>%
-        purrr::reduce(~as.vector(outer(.x, .y, paste, sep="")))
-    if (identical(seq_lst, character(0)))
-    {
-        stop("Not a DNA sequence!")
-    } else {
-        seq_lst
-    }
-}
+ deg_list <-
+     list(
+         'A' = 'A',
+         'T' = 'T',
+         'G' = 'G',
+         'C' = 'C',
+         '-' = '-',
+         'W' = c('A', 'T'),
+         'S' = c('C', 'G'),
+         'M' = c('A', 'C'),
+         'K' = c('G', 'T'),
+         'R' = c('A', 'G'),
+         'Y' = c('C', 'T'),
+         'B' = c('C', 'G', 'T'),
+         'D' = c('A', 'G', 'T'),
+         'H' = c('A', 'C', 'G'),
+         'V' = c('A', 'C', 'T'),
+         'N' = c('A', 'C', 'G', 'T'))
 
-fasta_to_df <- function(filename)
-{
-    fasta <- readDNAStringSet(filename)
-    seqs <- as.character(fasta)
-    names(seqs) <- NA
-    tibble(Name = names(fasta),
-           Sequence = seqs)
-}
+ expand_seq <- function(seq)
+ {
+     seq_lst <-
+         strsplit(seq, "") %>%
+         unlist %>%
+         map(~deg_list[[.x]]) %>%
+         purrr::reduce(~as.vector(outer(.x, .y, paste, sep="")))
+     if (identical(seq_lst, character(0)))
+     {
+         stop("Not a DNA sequence!")
+     } else {
+         seq_lst
+     }
+ }
 
-#+END_SRC
+ fasta_to_df <- function(filename)
+ {
+     fasta <- readDNAStringSet(filename)
+     seqs <- as.character(fasta)
+     names(seqs) <- NA
+     tibble(Name = names(fasta),
+            Sequence = seqs)
+ }
 
-
-* Prepare the 40-mer probe candidates
-
-#+BEGIN_SRC R
-primer_candidates <-
-    fasta_to_df("Allele-dna.fa") %>% 
-    mutate(Exp = map(Sequence,
-                     sliding_window(as.character,
-                                    win_size = 40))) %>%
-    select(-Sequence) %>%
-    unnest(Exp) %>%
-    group_by(Name) %>%
-    mutate(Ix = row_number()) %>%
-    separate(Name, into=c("Prot_id"), sep=" ") %>%
-    unite(Fasta_id, Prot_id, Ix, sep="_")
-
-primer_candidates %>% 
-    mutate(Out = glue(">{Fasta_id}\n{Exp}\n")) %>% 
-    pull(Out) %>%
-    write("probe_cands.fasta")
-#+END_SRC
+ #+END_SRC
 
 
-* Prepare the BLAST search table
+** Prepare the 40-mer probe candidates
 
-#+BEGIN_SRC sh 
-nsearch search --query=probe_cands.fasta --db=Allele-dna.fa --out=probe_hits.csv --min-identity=0.8 --strand=both --max-hits=1558
-#+END_SRC
+ #+BEGIN_SRC R
+ primer_candidates <-
+     fasta_to_df("Allele-dna.fa") %>% 
+     mutate(Exp = map(Sequence,
+                      sliding_window(as.character,
+                                     win_size = 40))) %>%
+     select(-Sequence) %>%
+     unnest(Exp) %>%
+     group_by(Name) %>%
+     mutate(Ix = row_number()) %>%
+     separate(Name, into=c("Prot_id"), sep=" ") %>%
+     unite(Fasta_id, Prot_id, Ix, sep="_")
 
-
-* Then parse the resulting output file "probe_hits.csv" using a memory-efficient Python script
-
-#+BEGIN_SRC python
-import sys
-from collections import defaultdict
-
-acc = defaultdict(int)
-with open('probe_hits.csv') as fh:
-    next(fh)
-    for ix, ln in enumerate(fh):
-        broken = ln.split(",")
-        fst = broken[0].replace("WP_", "WP").split("_")[0]
-        fst = fst.replace("WP", "WP_")
-        snd = broken[1].replace("WP_", "WP").split(" ")[0]
-        snd = snd.replace("WP", "WP_")
-        qlength = int(broken[3]) - int(broken[2])
-        tlength = int(broken[5]) - int(broken[4])
-        to_acc = ",".join(sorted([fst, snd]))
-        if ((qlength == tlength) and (qlength == 39) and (fst != snd)):
-            acc[to_acc] += 1
-        if (ix % 100000 == 0):
-            print(ix)
-
-with open('probe_counts.csv', 'w') as fh:
-    for key, val in acc.items():
-        fh.write(key + "\n")
-#+END_SRC
-
-This spits out the file "probe_counts.csv"
+ primer_candidates %>% 
+     mutate(Out = glue(">{Fasta_id}\n{Exp}\n")) %>% 
+     pull(Out) %>%
+     write("probe_cands.fasta")
+ #+END_SRC
 
 
-* Prepare the gdf file from probe_counts.csv
+** Prepare the BLAST search table
 
-#+BEGIN_SRC R :session
+ #+BEGIN_SRC sh 
+ nsearch search --query=probe_cands.fasta --db=Allele-dna.fa --out=probe_hits.csv --min-identity=0.8 --strand=both --max-hits=1558
+ #+END_SRC
 
-con2 <- read_csv("probe_counts.csv", col_names=FALSE) %>%
-    unite(Netw, X1, X2, sep=",") %>%
-    pull(Netw)
 
-annotation <- read.delim("Allele.tab", sep="\t") %>%
-    separate(allele_name, into=c("type"), sep="-", remove=FALSE) %>%
-    mutate(size = stop - start) %>%
-    select(protein_accession, type, size) %>%
-    with(paste(protein_accession, type, size, sep=","))
+** Then parse the resulting output file "probe_hits.csv" using a memory-efficient Python script
 
-gdf <- c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE",
-         annotation,
-         "edgedef>node1 VARCHAR,node2 VARCHAR",
-         con2)
+ #+BEGIN_SRC python
+ import sys
+ from collections import defaultdict
+
+ acc = defaultdict(int)
+ with open('probe_hits.csv') as fh:
+     next(fh)
+     for ix, ln in enumerate(fh):
+         broken = ln.split(",")
+         fst = broken[0].replace("WP_", "WP").split("_")[0]
+         fst = fst.replace("WP", "WP_")
+         snd = broken[1].replace("WP_", "WP").split(" ")[0]
+         snd = snd.replace("WP", "WP_")
+         qlength = int(broken[3]) - int(broken[2])
+         tlength = int(broken[5]) - int(broken[4])
+         to_acc = ",".join(sorted([fst, snd]))
+         if ((qlength == tlength) and (qlength == 39) and (fst != snd)):
+             acc[to_acc] += 1
+         if (ix % 100000 == 0):
+             print(ix)
+
+ with open('probe_counts.csv', 'w') as fh:
+     for key, val in acc.items():
+         fh.write(key + "\n")
+ #+END_SRC
+
+ This spits out the file "probe_counts.csv"
+
+
+** Prepare the gdf file from probe_counts.csv
+
+ #+BEGIN_SRC R :session
+
+ con2 <- read_csv("probe_counts.csv", col_names=FALSE) %>%
+     unite(Netw, X1, X2, sep=",") %>%
+     pull(Netw)
+
+ annotation <- read.delim("Allele.tab", sep="\t") %>%
+     separate(allele_name, into=c("type"), sep="-", remove=FALSE) %>%
+     mutate(size = stop - start) %>%
+     select(protein_accession, type, size) %>%
+     with(paste(protein_accession, type, size, sep=","))
+
+ gdf <- c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE",
+          annotation,
+          "edgedef>node1 VARCHAR,node2 VARCHAR",
+          con2)
          
-write(gdf, "clusters.gdf")
+ write(gdf, "clusters.gdf")
 
-#+END_SRC
-
-
-* Figure 1: Prepare also the gdf such that our primer designs are also shown in the network
-
-** Start by expanding our probe designs (all_probes.xlsx) into non-degenerate versions
-
-#+BEGIN_SRC R :session
-
-all_probes <-
-    read_excel("all_probes.xlsx", sheet = "probes")
-
-exp_probes <- 
-    all_probes %>%
-    mutate(Exp = map(Target, expand_seq)) %>%
-    unnest
-
-write_csv(exp_probes, "exp_probes.csv")
-
-#+END_SRC
+ #+END_SRC
 
 
-** Then filter out their target ranges using a memory-efficient Python script
+** Prepare also the gdf such that our primer designs are also shown in the network
 
-#+BEGIN_SRC python
-seq_acc = []
-with open("exp_probes.csv") as ep:
-    next(ep)
-    for ix, line in enumerate(ep):
-        seq = line.split(",")[4].strip()
-        seq_acc.append(seq)
-seq_set = set(seq_acc)
+*** Start by expanding our probe designs (all_probes.xlsx) into non-degenerate versions
 
-probe_acc = []
-with open("probe_hits.csv") as ph:
-    next(ph)
-    for ix, line in enumerate(ph):
-        seq = line.split(",")[6]
-        if seq in seq_set:
-            probe_acc.append(line)
-            print("JEP")
-        if (ix % 1000 == 0):
-            print(ix)
+ #+BEGIN_SRC R :session
+
+ all_probes <-
+     read_excel("all_probes.xlsx", sheet = "probes")
+
+ exp_probes <- 
+     all_probes %>%
+     mutate(Exp = map(Target, expand_seq)) %>%
+     unnest
+
+ write_csv(exp_probes, "exp_probes.csv")
+
+ #+END_SRC
+
+
+*** Then filter out their target ranges using a memory-efficient Python script
+
+ #+BEGIN_SRC python
+ seq_acc = []
+ with open("exp_probes.csv") as ep:
+     next(ep)
+     for ix, line in enumerate(ep):
+         seq = line.split(",")[4].strip()
+         seq_acc.append(seq)
+ seq_set = set(seq_acc)
+
+ probe_acc = []
+ with open("probe_hits.csv") as ph:
+     next(ph)
+     for ix, line in enumerate(ph):
+         seq = line.split(",")[6]
+         if seq in seq_set:
+             probe_acc.append(line)
+             print("JEP")
+         if (ix % 1000 == 0):
+             print(ix)
         
-with open("selected_probe_hits.csv", "w") as out:
-    for line in probe_acc:
-        out.write(line)
-#+END_SRC
+ with open("selected_probe_hits.csv", "w") as out:
+     for line in probe_acc:
+         out.write(line)
+ #+END_SRC
 
 
-** Process the resulting selected probe hits file "selected_probe_hits.csv" into gdf annotation
+*** Process the resulting selected probe hits file "selected_probe_hits.csv" into gdf annotation
 
-#+BEGIN_SRC R :session
-selected_hits <-
-    read_csv("selected_probe_hits.csv", col_names=FALSE)
+ #+BEGIN_SRC R :session
+ selected_hits <-
+     read_csv("selected_probe_hits.csv", col_names=FALSE)
 
-probe_coverage <-
-    left_join(exp_probes, selected_hits, by=c("Exp" = "X7")) %>%
-    select(Name, X1) %>%
-    filter(complete.cases(.)) %>%
-    unique %>%
-    mutate(X1 = str_replace(X1, "WP_", "WP")) %>%
-    separate(X1, c("Seq"), "_") %>%
-    mutate(Seq = str_replace(Seq, "WP", "WP_")) %>%
-    unique %>%
-    group_by(Seq) %>%
-    summarise(Probes = paste(sort(Name), collapse=";"))
+ probe_coverage <-
+     left_join(exp_probes, selected_hits, by=c("Exp" = "X7")) %>%
+     select(Name, X1) %>%
+     filter(complete.cases(.)) %>%
+     unique %>%
+     mutate(X1 = str_replace(X1, "WP_", "WP")) %>%
+     separate(X1, c("Seq"), "_") %>%
+     mutate(Seq = str_replace(Seq, "WP", "WP_")) %>%
+     unique %>%
+     group_by(Seq) %>%
+     summarise(Probes = paste(sort(Name), collapse=";"))
 
-con2 <- read_csv("probe_counts.csv", col_names=FALSE) %>%
-    unite(Netw, X1, X2, sep=",") %>%
-    pull(Netw)
+ con2 <- read_csv("probe_counts.csv", col_names=FALSE) %>%
+     unite(Netw, X1, X2, sep=",") %>%
+     pull(Netw)
 
-annotation <-
-    read.delim("Allele.tab", sep="\t") %>%
-    separate(allele_name, into=c("type"), sep="-", remove=FALSE) %>%
-    mutate(size = stop - start) %>%
-    select(protein_accession, type, size) %>%
-    left_join(probe_coverage, by=c("protein_accession" = "Seq")) %>%
-    with(paste(protein_accession, type, size, Probes, sep=","))
+ annotation <-
+     read.delim("Allele.tab", sep="\t") %>%
+     separate(allele_name, into=c("type"), sep="-", remove=FALSE) %>%
+     mutate(size = stop - start) %>%
+     select(protein_accession, type, size) %>%
+     left_join(probe_coverage, by=c("protein_accession" = "Seq")) %>%
+     with(paste(protein_accession, type, size, Probes, sep=","))
 
-gdf <- c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE,probe VARCHAR",
-         annotation,
-         "edgedef>node1 VARCHAR,node2 VARCHAR",
-         con2)
+ gdf <- c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE,probe VARCHAR",
+          annotation,
+          "edgedef>node1 VARCHAR,node2 VARCHAR",
+          con2)
          
-write(gdf, "clusters.gdf")
-#+END_SRC
+ write(gdf, "clusters.gdf")
+ #+END_SRC
 
-
-* Figure 3:
+ 
+* Figure 3
   
 ** Prepare the joined reads and quality filter using nsearch
 
@@ -532,6 +534,19 @@ mol_counts.to_csv("mol_bcs.csv", index=False)
 #+END_SRC
 
 ** Then plot the count table
+   
+|-------------------+--------------------------------|
+| Inputs            | Outputs                        |
+|-------------------+--------------------------------|
+| mol_bc_counts.csv | samples2-8.pdf                 |
+| conc_gradient.csv | samples9-11.pdf                |
+|                   | samples13-20.pdf               |
+|                   | rarefaction.pdf                |
+|                   | dilution_rarefaction.pdf       |
+|                   | trunc_dilution_rarefaction.pdf |
+|                   | stds.pdf                       |
+|-------------------+--------------------------------|
+
 
 #+BEGIN_SRC R :session
 library(data.table)
@@ -550,106 +565,30 @@ mol_counts <- mol_bc_counts[, .(Tot_reads=sum(Count), Count=.N),
 mol_counts[, Molecule_target := factor(Molecule_target, levels=as.character(c(0:10, 12:15)))]
 mol_counts[, Sample := factor(Sample, levels=as.character(c(1:11, 13:20)))]
 
-## Prepare standard curves for the different molecular targets
-detection_limits <-
-    mol_counts[Sample %in% c(3, 19, 20),
-               .(Mean=mean(Count), Sd=sd(Count)),
-               by=.(Molecule_target, Molecule_replicate)][, .(Molecule_target, Mean, Sd, Detlim = Mean + 3*Sd)]
-
-concs <- fread("conc_gradient.csv")
-std_counts <- mol_bc_counts[Sample %in% 9:11,
-                           .(Count=.N),
-                           by=.(Sample, Sample_replicate,
-                                Molecule_target, Molecule_replicate)]
-numeric_cols <- names(mol_counts)[c(1, 3, 4)]
-std_counts[, (numeric_cols) := lapply(.SD, as.numeric), .SDcols=numeric_cols]
-conc_counts <- merge(concs, std_counts, by=c("Sample", "Molecule_target", "Molecule_replicate"))
-conc_counts[, Molecule_target := as.factor(Molecule_target)]
-
-pdf("std_curves.pdf")
-ggplot(conc_counts, aes(x=Molecule_concentration, y=Count, color=Molecule_target)) +
-    geom_point() +
-    geom_smooth(method='lm')
-dev.off()
-
-pdf("log_log.pdf")
-ggplot(conc_counts, aes(x=Molecule_concentration, y=Count, color=Molecule_target)) +
-    geom_point() +
-    geom_smooth(method='lm') +
-    scale_x_log10() + scale_y_log10()
-dev.off()
-
-pdf("log_log2.pdf", useDingbats = FALSE)
-ggplot(conc_counts, aes(x=Molecule_concentration, y=Count, color=Molecule_target)) +
-    geom_point() +
-    geom_smooth(method='lm', se=FALSE) +
-    facet_grid(.~Molecule_replicate) +
-    scale_x_log10() +
-    scale_y_log10() +
-    theme_bw()
-dev.off()
-
-pdf("std_log_log_detection_limits.pdf")
-ggplot(conc_counts, aes(x=Molecule_concentration, y=Count, color=Molecule_target)) +
-    geom_point() +
-    geom_hline(yintercept = range(10.6, 136.8)) +
-    geom_smooth(method='lm') +
-    scale_x_log10() +
-    scale_y_log10()
-dev.off()
-
-## conc_counts2 <- unite(conc_counts, Tar_Rep, Molecule_target, Molecule_replicate, sep="_", remove=FALSE)
-## conc_counts2 <- filter(conc_counts2, Tar_Rep %in% c("5_1","6_1","7_1","13_1","14_1","15_1","0_2","1_2",
-## conc_counts2 <- unite(conc_counts, Tar_Rep, Molecule_target, Molecule_replicate, sep="_", remove=FALSE)
-## conc_counts2 <- filter(conc_counts2, Tar_Rep %in% c("6_1","13_1","14_1","15_1","1_2","8_2","14_2","15_2"))
-## ggplot(conc_counts2, aes(x=Molecule_concentration, y=Count, color=Tar_Rep)) + geom_point() + geom_smooth(method='lm', se=FALSE) + scale_x_log10() + scale_y_log10() + theme_bw()
-## ggplot(conc_counts2, aes(x=Molecule_concentration, y=Count, color=Tar_Rep)) + geom_point() + geom_smooth(method='lm', se=FALSE) + geom_hline(yintercept = range(10.6, 136.8)) + scale_x_log10() + scale_y_log10() + theme_bw()
-
 ## Prepare the box plots of the different treatments.
-pdf("samples_1ab.pdf")
-tr_mol_counts <- mol_counts[Sample %in% 1,]
-ggplot(tr_mol_counts, aes(x=Molecule_target, y=Count, color=Sample_replicate)) + geom_point() + facet_grid(Molecule_replicate~.)+ theme(legend.position="none")
-dev.off()
-
-pdf("samples_3-8.pdf")
-tr_mol_counts <- mol_counts[Sample %in% 3:8,]
-ggplot(tr_mol_counts, aes(x=Molecule_target, y=Count, color=Molecule_replicate)) + geom_boxplot() + facet_grid(Sample~.) + theme_bw() + theme(legend.position="none")
+pdf("samples_2-8.pdf")
+tr_mol_counts <- mol_counts[Sample %in% 2:8,] %>% 
+    ggplot(aes(x=Molecule_target, y=Count, color=Molecule_replicate)) +
+    geom_boxplot() +
+    facet_grid(Sample~.) +
+    theme_bw() +
+    theme(legend.position="none")
 dev.off()
 
 pdf("samples_9-11.pdf")
-tr_mol_counts <- mol_counts[Sample %in% 9:11,]
-ggplot(tr_mol_counts, aes(x=Molecule_target, y=Count, color=Molecule_replicate)) + geom_boxplot() + facet_grid(Sample~.) + theme(legend.position="none")
+tr_mol_counts <- mol_counts[Sample %in% 9:11,] %>% 
+    ggplot(aes(x=Molecule_target, y=Count, color=Molecule_replicate)) +
+    geom_boxplot() +
+    facet_grid(Sample~.) +
+    theme(legend.position="none")
 dev.off()
 
 pdf("samples_13-20.pdf")
-tr_mol_counts <- mol_counts[Sample %in% 13:20,]
-ggplot(tr_mol_counts, aes(x=Molecule_target, y=Count, color=Molecule_replicate)) + geom_boxplot() + facet_grid(Sample~.) + theme(legend.position="none")
-dev.off()
-
-## Check whether probe multiplexing affects probe performance
-mult_mol_counts <- mol_counts[Sample %in% c(2, 4:8)]
-mult_mol_counts[, Multiplexing := factor(Sample)]
-levels(mult_mol_counts$Multiplexing) <- c("30", "15", "15", "10", "10", "10")
-filt_mol_counts <- mult_mol_counts[(Sample == 2) |
-                                  (Sample == 4 & Molecule_target %in% 0:7) |
-                                  (Sample == 5 & Molecule_target %in% c(8, 10, 13:15)) |
-                                  (Sample == 6 & Molecule_target %in% 0:4) |
-                                  (Sample == 7 & Molecule_target %in% 5:8) |
-                                  (Sample == 8 & Molecule_target %in% c(10, 13:15))]
-
-filt_mol_counts[, Ratio := Count / Tot_reads]
-
-pdf("pooling_effect.pdf")
-ggplot(filt_mol_counts, aes(x=Molecule_target, y=Ratio, color=Multiplexing)) + geom_boxplot() + facet_grid(Molecule_replicate~.)
-dev.off()
-
-## Plot the read lenght distribution
-count_files <- list.files(pattern = "\\.txt$")
-count_list <- lapply(count_files, function(x) fread(x))
-names(count_list) <- count_files
-count_frame <- melt(count_list, id.vars = c("V1", "V2"))
-pdf("read_lengths.pdf")
-ggplot(count_frame, aes(x=V1, y=V2, fill=L1)) + geom_bar(stat="identity", position="dodge")
+tr_mol_counts <- mol_counts[Sample %in% 13:20,] %>% 
+    ggplot(aes(x=Molecule_target, y=Count, color=Molecule_replicate)) +
+    geom_boxplot() +
+    facet_grid(Sample~.) +
+    theme(legend.position="none")
 dev.off()
 
 ## Prepare rarefaction curves for different sequencing cases.
@@ -661,9 +600,11 @@ filt_mol_counts <- mol_bc_counts[(Sample == 2) |
                                 (Sample == 8 & Molecule_target %in% c(10, 13:15))]
 bc_lists <- dlply(filt_mol_counts, .(Sample, Molecule_target, Molecule_replicate), function(x) x$Count)
 rarefaction_list <- llply(bc_lists, function(x) iNEXT(x, q=0, datatype="abundance"), .progress = "text")
-## Takes a long time to run. Commented to prevent accidental execution
 rarefaction_table_list <- llply(rarefaction_list, function(x) fortify(x, type=1))
-rarefaction_tables <- melt(rarefaction_table_list, id.vars=c("datatype", "plottype", "site", "method", "order", "x", "y", "y.lwr", "y.upr")) %>% data.table
+rarefaction_tables <-
+    melt(rarefaction_table_list,
+         id.vars=c("datatype", "plottype", "site", "method", "order", "x", "y", "y.lwr", "y.upr")) %>%
+    data.table
 rarefaction_tables[, c("Sample", "Molecule_target", "Molecule_replicate") := tstrsplit(L1, ".", fixed=TRUE)]
 rarefaction_tables.point <- rarefaction_tables[which(rarefaction_tables$method=="observed"),]
 rarefaction_tables.line <- rarefaction_tables[which(rarefaction_tables$method!="observed"),]
@@ -680,28 +621,6 @@ ggplot(rarefaction_tables, aes(x=x, y=y, colour=Molecule_target)) +
   labs(x="Number of sampled barcodes", y="Barcode diversity")
 dev.off()
 
-## Preparing the count histograms of the sampled barcodes
-filt_mol_counts <- mol_bc_counts[(Sample == 2) |
-                                (Sample == 4 & Molecule_target %in% 0:7) |
-                                (Sample == 5 & Molecule_target %in% c(8, 10, 13:15)) |
-                                (Sample == 6 & Molecule_target %in% 0:4) |
-                                (Sample == 7 & Molecule_target %in% 5:8) |
-                                (Sample == 8 & Molecule_target %in% c(10, 13:15))]
-ordered_mol_counts <- dlply(filt_mol_counts, .(Sample, Molecule_target, Molecule_replicate), function(x) {
-    counts <- sort(x$Count, decreasing = TRUE)
-    df <- data.frame(BC=1:length(counts), Count=counts)
-    return(df)
-} ) %>% melt(id.vars=c("BC", "Count")) %>% data.table
-ordered_mol_counts[, c("Sample", "Molecule_target", "Molecule_replicate") := tstrsplit(L1, ".", fixed=TRUE)]
-
-pdf("bc_sampling.pdf")
-ggplot(ordered_mol_counts, aes(x=BC, y=Count, color=Sample, fill=Sample)) + geom_density(stat="identity", alpha=0.2) + facet_grid(Molecule_target~Molecule_replicate)
-dev.off()
-
-pdf("bc_sampling_sample.pdf")
-ggplot(ordered_mol_counts, aes(x=BC, y=Count, color=Molecule_target, fill=Molecule_target)) + geom_density(stat="identity", alpha=0.2) + facet_grid(Sample~Molecule_replicate)
-dev.off()
-
 ## Prepare rarefaction curves for the dilution-to-extinction-samples
 mol_bc_counts <- fread("mol_bc_counts.csv")
 mol_bc_counts[, c("Sample", "Sample_replicate") := tstrsplit(Sample_type, "_", fixed=TRUE)]
@@ -710,11 +629,8 @@ mol_bc_counts <- mol_bc_counts[!(Molecule_target %in% c(9,12))]
 mol_bc_counts <- mol_bc_counts[Sample %in% 9:11]
 
 concs <- fread("conc_gradient.csv")
-
 bc_lists <- dlply(mol_bc_counts, .(Sample, Molecule_target, Molecule_replicate), function(x) x$Count)
-
 rarefaction_list <- llply(bc_lists, function(x) iNEXT(x, q=0, datatype="abundance"), .progress = "text")
-
 rarefaction_table_list <- llply(rarefaction_list, function(x) fortify(x, type=1))
 rarefaction_tables <- melt(rarefaction_table_list, id.vars=c("datatype", "plottype", "site", "method", "order", "x", "y", "y.lwr", "y.upr")) %>% data.table
 rarefaction_tables[, c("Sample", "Molecule_target", "Molecule_replicate") := tstrsplit(L1, ".", fixed=TRUE)]
@@ -749,29 +665,6 @@ ggplot(conc_counts, aes(x=x, y=y, colour=Molecule_concentration)) +
     scale_x_continuous(limits = c(0, 750))
 dev.off()
 
-## Calculate how well the rarefaction estimates correspond with the known concentrations
-
-rarefaction_estimates <- llply(rarefaction_list, function(x) {
-    df <- data.frame(x$AsyEst)
-    df$Analysis <- c("Species_richness", "Shannon_diversity", "Simpson_diversity")
-    return(df)
-} ) %>% melt(id.vars=c("Observed", "Estimator", "Est_s.e.", "X95..Lower", "X95..Upper", "Analysis"))
-richness <- rarefaction_estimates[rarefaction_estimates$Analysis == "Species_richness",]
-concs <- fread("conc_gradient.csv")
-concs$L1 <- apply(concs[, c("Sample", "Molecule_target", "Molecule_replicate")], 1, paste, collapse = ".")
-conc_richness <- merge(concs, richness, by="L1")
-conc_richness$Sample <- as.factor(conc_richness$Sample)
-conc_richness$Molecule_target <- as.factor(conc_richness$Molecule_target)
-conc_richness$Molecule_replicate <- as.factor(conc_richness$Molecule_replicate)
-
-pdf("estimate_std.pdf")
-ggplot(conc_richness, aes(x=Molecule_concentration, y=Estimator, color=Molecule_target)) + geom_point() + geom_smooth(method='lm') + scale_x_log10() + scale_y_log10()
-dev.off()
-
-pdf("estimate_std_log_log.pdf")
-ggplot(conc_richness, aes(x=Molecule_concentration, y=Estimator, color=Molecule_target)) + geom_point() + geom_smooth(method='lm') 
-dev.off()
-
 ## Corrected for random sampling
 
 mol_bc_counts <- fread("mol_bc_counts.csv")
@@ -781,11 +674,13 @@ mol_bc_counts <- mol_bc_counts[!(Molecule_target %in% c(9,12))]
 mol_bc_counts <- mol_bc_counts[Sample %in% 9:11]
 bc_lists <- dlply(mol_bc_counts, .(Sample, Molecule_target, Molecule_replicate, Sample_replicate), function(x) x$Count)
 rarefaction_list <- llply(bc_lists, function(x) iNEXT(x, q=0, datatype="abundance"), .progress = "text")
-rarefaction_estimates <- llply(rarefaction_list, function(x) {
+rarefaction_estimates <- llply(rarefaction_list, function(x)
+{
     df <- data.frame(x$AsyEst)
     df$Analysis <- c("Species_richness", "Shannon_diversity", "Simpson_diversity")
     return(df)
-} ) %>% melt(id.vars=c("Observed", "Estimator", "Est_s.e.", "X95..Lower",
+}) %>%
+    melt(id.vars=c("Observed", "Estimator", "Est_s.e.", "X95..Lower",
                      "X95..Upper", "Analysis"))
 rarefaction_estimates <- separate(rarefaction_estimates, L1,
                                  c("Sample", "Molecule_target",
@@ -814,7 +709,8 @@ ggplot(conc_counts2, aes(x=Molecule_concentration, y=Estimator, color=Tar_Rep)) 
 dev.off()
 #+END_SRC
 
-* Figure 4:
+
+* Figure 4
 
 ** With the sequencing data back, join the paired ends and quality filter using nsearch
 
