@@ -75,6 +75,12 @@
 
 
 ** Prepare the 40-mer probe candidates
+   
+|---------------+-------------------|
+| Inputs        | Outputs           |
+|---------------+-------------------|
+| Allele-dna.fa | probe_cands.fasta |
+|---------------+-------------------|
 
  #+BEGIN_SRC R
  primer_candidates <-
@@ -98,12 +104,24 @@
 
 ** Prepare the BLAST search table
 
+|-------------------+----------------|
+| Inputs            | Outputs        |
+|-------------------+----------------|
+| probe_cands.fasta | probe_hits.csv |
+|-------------------+----------------|
+
  #+BEGIN_SRC sh 
  nsearch search --query=probe_cands.fasta --db=Allele-dna.fa --out=probe_hits.csv --min-identity=0.8 --strand=both --max-hits=1558
  #+END_SRC
 
 
 ** Then parse the resulting output file "probe_hits.csv" using a memory-efficient Python script
+
+|----------------+------------------|
+| Inputs         | Outputs          |
+|----------------+------------------|
+| probe_hits.csv | probe_counts.csv |
+|----------------+------------------|
 
  #+BEGIN_SRC python
  import sys
@@ -131,10 +149,14 @@
          fh.write(key + "\n")
  #+END_SRC
 
- This spits out the file "probe_counts.csv"
-
 
 ** Prepare the gdf file from probe_counts.csv
+
+|------------------+--------------|
+| Inputs           | Outputs      |
+|------------------+--------------|
+| probe_counts.csv | clusters.gdf |
+|------------------+--------------|
 
  #+BEGIN_SRC R :session
 
@@ -162,6 +184,12 @@
 
 *** Start by expanding our probe designs (all_probes.xlsx) into non-degenerate versions
 
+|-----------------+----------------|
+| Inputs          | Outputs        |
+|-----------------+----------------|
+| all_probes.xlsx | exp_probes.csv |
+|-----------------+----------------|
+
  #+BEGIN_SRC R :session
 
  all_probes <-
@@ -178,6 +206,13 @@
 
 
 *** Then filter out their target ranges using a memory-efficient Python script
+
+|----------------+-------------------------|
+| Inputs         | Outputs                 |
+|----------------+-------------------------|
+| exp_probes.csv | selected_probe_hits.csv |
+| probe_hits.csv |                         |
+|----------------+-------------------------|
 
  #+BEGIN_SRC python
  seq_acc = []
@@ -206,6 +241,14 @@
 
 
 *** Process the resulting selected probe hits file "selected_probe_hits.csv" into gdf annotation
+
+|-------------------------+--------------|
+| Inputs                  | Outputs      |
+|-------------------------+--------------|
+| selected_probe_hits.csv | clusters.gdf |
+| probe_counts.csv        |              |
+| Allele.tab              |              |
+|-------------------------+--------------|
 
  #+BEGIN_SRC R :session
  selected_hits <-
@@ -248,6 +291,23 @@
   
 ** Prepare the joined reads and quality filter using nsearch
 
+|----------------------------------------+-----------------------|
+| Inputs                                 | Outputs               |
+|----------------------------------------+-----------------------|
+| NG-13024_1_lib236478_5794_7_1.fastq.gz | filt_NG-13024_1.fasta |
+| NG-13024_2_lib236478_5794_7_1.fastq.gz | filt_NG-13024_2.fasta |
+| NG-13024_3_lib236478_5794_7_1.fastq.gz | filt_NG-13024_3.fasta |
+| NG-13024_4_lib236478_5794_7_1.fastq.gz | filt_NG-13024_4.fasta |
+| NG-13024_5_lib236478_5794_7_1.fastq.gz | filt_NG-13024_5.fasta |
+| NG-13024_6_lib236478_5794_7_1.fastq.gz | filt_NG-13024_6.fasta |
+| NG-13024_1_lib236478_5794_7_2.fastq.gz |                       |
+| NG-13024_2_lib236478_5794_7_2.fastq.gz |                       |
+| NG-13024_3_lib236478_5794_7_2.fastq.gz |                       |
+| NG-13024_4_lib236478_5794_7_2.fastq.gz |                       |
+| NG-13024_5_lib236478_5794_7_2.fastq.gz |                       |
+| NG-13024_6_lib236478_5794_7_2.fastq.gz |                       |
+|----------------------------------------+-----------------------|
+
 #+BEGIN_SRC sh
 nsearch merge --forward=NG-13024_1_lib236478_5794_7_1.fastq.gz --reverse=NG-13024_1_lib236478_5794_7_2.fastq.gz --out=NG-13024_1.fastq
 nsearch merge --forward=NG-13024_2_lib236479_5794_7_1.fastq.gz --reverse=NG-13024_2_lib236479_5794_7_2.fastq.gz --out=NG-13024_2.fastq
@@ -259,7 +319,19 @@ nsearch merge --forward=NG-13024_6_lib237855_5794_7_1.fastq.gz --reverse=NG-1302
 ls *.fastq | grep -v lib | while read file; do nsearch filter --in $file --out filt_$file; done
 #+END_SRC
 
+
 ** Process the quality-filtered sequences into count tables
+   
+|-----------------------+-------------------|
+| Inputs                | Outputs           |
+|-----------------------+-------------------|
+| filt_NG-13024_1.fasta | mol_bc_counts.csv |
+| filt_NG-13024_2.fasta | mol_bcs.csv       |
+| filt_NG-13024_3.fasta |                   |
+| filt_NG-13024_4.fasta |                   |
+| filt_NG-13024_5.fasta |                   |
+| filt_NG-13024_6.fasta |                   |
+|-----------------------+-------------------|
 
 #+BEGIN_SRC python
 
@@ -534,6 +606,7 @@ mol_counts.to_csv("mol_bcs.csv", index=False)
 
 #+END_SRC
 
+
 ** Then plot the count table
    
 |-------------------+--------------------------------|
@@ -547,7 +620,6 @@ mol_counts.to_csv("mol_bcs.csv", index=False)
 |                   | trunc_dilution_rarefaction.pdf |
 |                   | stds.pdf                       |
 |-------------------+--------------------------------|
-
 
 #+BEGIN_SRC R :session
 library(data.table)
@@ -715,6 +787,17 @@ dev.off()
 
 ** With the sequencing data back, join the paired ends and quality filter using nsearch
 
+|-----------------------------------------+---------------|
+| Inputs                                  | Outputs       |
+|-----------------------------------------+---------------|
+| NG-17872_10_lib297291_6185_1_1.fastq.gz | lib10.fasta   |
+| NG-17872_11_lib297292_6178_3_1.fastq.gz | lib11_1.fasta |
+| NG-17872_11_lib297292_6189_3_1.fastq.gz | lib11_2.fasta |
+| NG-17872_10_lib297291_6185_1_1.fastq.gz |               |
+| NG-17872_11_lib297292_6178_3_1.fastq.gz |               |
+| NG-17872_11_lib297292_6189_3_1.fastq.gz |               |
+|-----------------------------------------+---------------|
+
  #+BEGIN_SRC sh
  nsearch merge --forward NG-17872_10_lib297291_6185_1_1.fastq.gz --reverse NG-17872_10_lib297291_6185_1_2.fastq.gz --out lib10.fastq
  nsearch merge --forward NG-17872_11_lib297292_6178_3_1.fastq.gz --reverse NG-17872_11_lib297292_6178_3_2.fastq.gz --out lib11_1.fastq
@@ -727,6 +810,14 @@ dev.off()
 
 
 ** Then process the merged, quality-filtered sequences into count tables on Python
+
+|-------------+-------------|
+| Inputs      | Outputs     |
+|-------------+-------------|
+| probes.xlsx | lib10.csv   |
+|             | lib11_1.csv |
+|             | lib11_2.csv |
+|-------------+-------------|
 
  #+BEGIN_SRC python
  import os
@@ -810,8 +901,73 @@ dev.off()
 
  #+END_SRC
 
+ 
+** Expand the library file (which lists the gene families present in the bacterial genomic DNA samples)
+
+|----------------+-------------------------|
+| Inputs         | Outputs                 |
+|----------------+-------------------------|
+| libraries.xlsx | expanded_libraries.xlsx |
+|----------------+-------------------------|
+
+#+BEGIN_SRC ipython :session
+import os
+import epride as ep
+import pandas as pd
+from collections import defaultdict
+
+## Import the data
+
+libraries = pd.read_excel("libraries.xlsx")
+
+## Expand the table based in the numeric Cluster column
+
+acc = []
+for _, row in libraries.iterrows():
+    cluster = row['Cluster']
+    if isinstance(cluster, int):
+        row1 = row.copy().to_dict()
+        row2 = row.copy().to_dict()
+        row1['Cluster'] = str(cluster) + "_1"
+        row2['Cluster'] = str(cluster) + "_2"
+        acc.append(row1)
+        acc.append(row2)
+    elif "," in cluster:
+        exp_cluster = cluster.split(",")
+        for cluster_instance in exp_cluster:
+            try:
+                cluster_instance = int(cluster_instance)
+                row1 = row.copy().to_dict()
+                row2 = row.copy().to_dict()
+                row1['Cluster'] = str(cluster_instance) + "_1"
+                row2['Cluster'] = str(cluster_instance) + "_2"
+                acc.append(row1)
+                acc.append(row2)
+            except ValueError:
+                pass
+
+exp_libraries = pd.DataFrame(acc)[['Number',
+                                   'Sample_ID',
+                                   'Genes',
+                                   'Cluster',
+                                   'Probes_in_MM_included',
+                                   'Sample_ix',
+                                   'Tube']]
+
+exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
+#+END_SRC
+
 
 ** Prepare visualizations of the lib10 and lib11 count tables
+
+|-------------------------+------------------|
+| Inputs                  | Outputs          |
+|-------------------------+------------------|
+| expanded_libraries.xlsx | lib_complete.pdf |
+| lib10.csv               |                  |
+| lib11_1.csv             |                  |
+| lib11_2.csv             |                  |
+|-------------------------+------------------|
 
  #+BEGIN_SRC R :session
  library(tidyverse)
@@ -830,13 +986,6 @@ dev.off()
      mutate(Tube = 10) %>%
      select(Tube, Sample_ix, Cluster, Count)
 
- ggplot(lib10_counts, aes(x=Cluster, y=Sample_ix)) +
-     geom_tile(aes(fill=Count), color="gray") +
-     scale_fill_gradient(low = "white", high = "red", na.value="white") +
-     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-           axis.text.y = element_text(size=7))
- ggsave("lib10.pdf", last_plot())
-
  ## Prepare count table for tube 11
 
  lib11_counts <- rbind(read_csv("lib11_1.csv"),
@@ -850,13 +999,6 @@ dev.off()
      gather(Cluster, Count, -Sample_ix) %>%
      mutate(Tube = 11) %>%
      select(Tube, Sample_ix, Cluster, Count)
-
- ggplot(lib11_counts, aes(x=Cluster, y=Sample_ix)) +
-     geom_tile(aes(fill=Count), color="gray") +
-     scale_fill_gradient(low = "white", high = "red", na.value="white") +
-     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-           axis.text.y = element_text(size=7))
- ggsave("lib11.pdf", last_plot())
 
  ## Merge the count tables
 
