@@ -261,7 +261,7 @@ ls *.fastq | grep -v lib | while read file; do nsearch filter --in $file --out f
 
 ** Process the quality-filtered sequences into count tables
 
-#+BEGIN_SRC ipython :session
+#+BEGIN_SRC python
 
 import os
 import epride as ep
