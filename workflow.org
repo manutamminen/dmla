@@ -1,6 +1,20 @@
 * 1) Figure 1
 
-** Import libraries and define the processing functions
+** Design probe candidates for the ESBL genes usign a set coverage algorithm implemented in epride
+
+#+BEGIN_SRC ipython :session
+import epride as ep
+esbl_primers = ep.Primers("Allele.dna.fa", id_val=0.8, primer_length=40)
+first_20 = [[[i]  + j for j in koe[i]] for i in range(20)]
+#+END_SRC
+
+** Prepare the 40-mer probe candidates
+   
+|---------------+-------------------|
+| Inputs        | Outputs           |
+|---------------+-------------------|
+| Allele-dna.fa | probe_cands.fasta |
+|---------------+-------------------|
 
  #+BEGIN_SRC R
  library(tidyverse)
@@ -70,19 +84,7 @@
      tibble(Name = names(fasta),
             Sequence = seqs)
  }
-
- #+END_SRC
-
-
-** Prepare the 40-mer probe candidates
-   
-|---------------+-------------------|
-| Inputs        | Outputs           |
-|---------------+-------------------|
-| Allele-dna.fa | probe_cands.fasta |
-|---------------+-------------------|
-
- #+BEGIN_SRC R
+ 
  primer_candidates <-
      fasta_to_df("Allele-dna.fa") %>% 
      mutate(Exp = map(Sequence,
@@ -1051,6 +1053,10 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
 
 
 * 4) Session info
+
+** Python version 3.6.7 | packaged by conda-forge | (default, Feb 25 2019, 20:30:30)
+
+- Pandas version 0.24.1
 
 ** R version 3.5.1 (2018-07-02)
 - Platform: x86_64-apple-darwin13.4.0 (64-bit)
