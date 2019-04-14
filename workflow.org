@@ -640,18 +640,96 @@ mol_counts <- mol_bc_counts[, .(Tot_reads=sum(Count), Count=.N),
 mol_counts[, Molecule_target := factor(Molecule_target, levels=as.character(c(0:10, 12:15)))]
 mol_counts[, Sample := factor(Sample, levels=as.character(c(1:11, 13:20)))]
 
+
+## Input and clean up the count and barcode data
+mol_bc_counts <- fread("mol_bc_counts.csv")
+mol_bc_counts[, c("Sample", "Sample_replicate") := tstrsplit(Sample_type, "_", fixed=TRUE)]
+mol_bc_counts[, c("Stuffer", "Molecule_target", "Molecule_replicate") := tstrsplit(Molecule_type, "_", fixed=TRUE)]
+mol_bc_counts <- mol_bc_counts[!(Molecule_target %in% c(9,12))]
+
+mol_counts <- mol_bc_counts[, .(Tot_reads=sum(Count), Count=.N),
+                            by=.(Sample, Sample_replicate, Molecule_target, Molecule_replicate)]
+mol_counts[, Molecule_target := factor(Molecule_target, levels=as.character(c(0:10, 12:15)))]
+mol_counts[, Sample := factor(Sample, levels=as.character(c(1:11, 13:20)))]
+
+
+## Test the significances for the synthetic templates
+mc2 <- mol_counts[Sample %in% 2:8, c('Sample', 'Sample_replicate', 'Molecule_replicate', 'Molecule_target', 'Count')] %>%
+    unite(MRMT, Molecule_target, Molecule_replicate, sep="_") %>%
+    spread(MRMT, Count, fill=0) %>%
+    gather(MRMT, Count, -Sample, -Sample_replicate) %>%
+    separate(MRMT, c("Molecule_target", "Molecule_replicate"), "_") %>%
+    select(-Sample_replicate)
+
+blanks <-
+    mc2 %>%
+    filter(Sample %in% 3)
+
+non_blanks <-
+    mc2 %>%
+    filter(Sample %in% c(2, 4:8)) %>% 
+    left_join(blanks, by=c('Molecule_replicate', 'Molecule_target')) %>%
+    group_by(Sample.x, Molecule_replicate, Molecule_target) %>%
+    mutate(pval = tidy(wilcox.test(Count.x, Count.y, alternative = "greater"))$p.value * 6,
+           is_sig = ifelse(pval < 0.005, "Sig", "Non_sig")) %>%
+    select(-Sample.y, -Count.y) %>%
+    rename(Sample = Sample.x,
+           Count = Count.x)
+
+ggplot(non_blanks, aes(x=Molecule_target, y=Count, fill=Molecule_replicate, color=is_sig)) +
+    geom_boxplot() +
+    facet_grid(Sample~.) +
+    theme_bw() +
+    theme(legend.position="none")
+
+
+
+## Test the significances for the bacterial genomic templates
+
+mc2 <- mol_counts[Sample %in% 13:19, c('Sample', 'Sample_replicate', 'Molecule_replicate', 'Molecule_target', 'Count')] %>%
+    unite(MRMT, Molecule_target, Molecule_replicate, sep="_") %>%
+    spread(MRMT, Count, fill=0) %>%
+    gather(MRMT, Count, -Sample, -Sample_replicate) %>%
+    separate(MRMT, c("Molecule_target", "Molecule_replicate"), "_") %>%
+    select(-Sample_replicate)
+
+
+blanks <-
+    mc2 %>%
+    filter(Sample %in% 19)
+
+
+non_blanks <-
+    mc2 %>%
+    filter(Sample %in% 13:18) %>% 
+    left_join(blanks, by=c('Molecule_replicate', 'Molecule_target')) %>%
+    group_by(Sample.x, Molecule_replicate, Molecule_target) %>%
+    mutate(pval = tidy(wilcox.test(Count.x, Count.y, alternative = "greater"))$p.value * 6,
+           is_sig = ifelse(pval < 0.005, "Sig", "Non_sig")) %>%
+    select(-Sample.y, -Count.y) %>%
+    rename(Sample = Sample.x,
+           Count = Count.x)
+
+ggplot(non_blanks, aes(x=Molecule_target, y=Count, fill=Molecule_replicate, color=is_sig)) +
+    geom_boxplot() +
+    facet_grid(Sample~.) +
+    theme_bw() +
+    theme(legend.position="none")
+
+
 ## Prepare the box plots of the different treatments.
 pdf("samples_2-8.pdf")
-tr_mol_counts <- mol_counts[Sample %in% 2:8,] %>% 
+mol_counts[Sample %in% 2:8,] %>% 
     ggplot(aes(x=Molecule_target, y=Count, color=Molecule_replicate)) +
     geom_boxplot() +
     facet_grid(Sample~.) +
     theme_bw() +
     theme(legend.position="none")
+
 dev.off()
 
 pdf("samples_9-11.pdf")
-tr_mol_counts <- mol_counts[Sample %in% 9:11,] %>% 
+mol_counts[Sample %in% 9:11,] %>% 
     ggplot(aes(x=Molecule_target, y=Count, color=Molecule_replicate)) +
     geom_boxplot() +
     facet_grid(Sample~.) +
@@ -659,11 +737,13 @@ tr_mol_counts <- mol_counts[Sample %in% 9:11,] %>%
 dev.off()
 
 pdf("samples_13-20.pdf")
-tr_mol_counts <- mol_counts[Sample %in% 13:20,] %>% 
+
+mol_counts[Sample %in% 13:20,] %>% 
     ggplot(aes(x=Molecule_target, y=Count, color=Molecule_replicate)) +
     geom_boxplot() +
     facet_grid(Sample~.) +
     theme(legend.position="none")
+
 dev.off()
 
 ## Prepare rarefaction curves for different sequencing cases.
