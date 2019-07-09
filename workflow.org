@@ -8,6 +8,7 @@ esbl_primers = ep.Primers("Allele.dna.fa", id_val=0.8, primer_length=40)
 first_20 = [[[i]  + j for j in koe[i]] for i in range(20)]
 #+END_SRC
 
+
 ** Prepare the 40-mer probe candidates
    
 |---------------+-------------------|
@@ -232,7 +233,6 @@ first_20 = [[[i]  + j for j in koe[i]] for i in range(20)]
          seq = line.split(",")[6]
          if seq in seq_set:
              probe_acc.append(line)
-             print("JEP")
          if (ix % 1000 == 0):
              print(ix)
         
@@ -289,7 +289,7 @@ first_20 = [[[i]  + j for j in koe[i]] for i in range(20)]
  #+END_SRC
 
  
-* 2) Figure 3
+* 2) Figures 3 and S01
   
 ** Prepare the joined reads and quality filter using nsearch
 
@@ -628,18 +628,6 @@ library(data.table)
 library(plyr)
 library(tidyverse)
 library(iNEXT)
-
-## Input and clean up the count and barcode data
-mol_bc_counts <- fread("mol_bc_counts.csv")
-mol_bc_counts[, c("Sample", "Sample_replicate") := tstrsplit(Sample_type, "_", fixed=TRUE)]
-mol_bc_counts[, c("Stuffer", "Molecule_target", "Molecule_replicate") := tstrsplit(Molecule_type, "_", fixed=TRUE)]
-mol_bc_counts <- mol_bc_counts[!(Molecule_target %in% c(9,12))]
-
-mol_counts <- mol_bc_counts[, .(Tot_reads=sum(Count), Count=.N),
-                            by=.(Sample, Sample_replicate, Molecule_target, Molecule_replicate)]
-mol_counts[, Molecule_target := factor(Molecule_target, levels=as.character(c(0:10, 12:15)))]
-mol_counts[, Sample := factor(Sample, levels=as.character(c(1:11, 13:20)))]
-
 
 ## Input and clean up the count and barcode data
 mol_bc_counts <- fread("mol_bc_counts.csv")
