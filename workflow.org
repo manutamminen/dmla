@@ -1,4 +1,4 @@
-* 1) Figure 1
+* 1) Figure 2
 
 ** Design probe candidates for the ESBL genes usign a set coverage algorithm implemented in epride
 
@@ -289,7 +289,526 @@ first_20 = [[[i]  + j for j in koe[i]] for i in range(20)]
  #+END_SRC
 
  
-* 2) Figures 3 and S01
+* 3) Figure 3
+
+** With the sequencing data back, join the paired ends and quality filter using nsearch
+
+|-----------------------------------------+---------------|
+| Inputs                                  | Outputs       |
+|-----------------------------------------+---------------|
+| NG-17872_10_lib297291_6185_1_1.fastq.gz | lib10.fasta   |
+| NG-17872_11_lib297292_6178_3_1.fastq.gz | lib11_1.fasta |
+| NG-17872_11_lib297292_6189_3_1.fastq.gz | lib11_2.fasta |
+| NG-17872_10_lib297291_6185_1_1.fastq.gz |               |
+| NG-17872_11_lib297292_6178_3_1.fastq.gz |               |
+| NG-17872_11_lib297292_6189_3_1.fastq.gz |               |
+|-----------------------------------------+---------------|
+
+ #+BEGIN_SRC sh
+ nsearch merge --forward NG-17872_10_lib297291_6185_1_1.fastq.gz --reverse NG-17872_10_lib297291_6185_1_2.fastq.gz --out lib10.fastq
+ nsearch merge --forward NG-17872_11_lib297292_6178_3_1.fastq.gz --reverse NG-17872_11_lib297292_6178_3_2.fastq.gz --out lib11_1.fastq
+ nsearch merge --forward NG-17872_11_lib297292_6189_3_1.fastq.gz --reverse NG-17872_11_lib297292_6189_3_2.fastq.gz --out lib11_2.fastq
+
+ nsearch filter --in lib10.fastq --out lib10.fasta
+ nsearch filter --in lib11_1.fastq --out lib11_1.fasta
+ nsearch filter --in lib11_2.fastq --out lib11_2.fasta
+ #+END_SRC
+
+
+** Then process the merged, quality-filtered sequences into count tables on Python
+
+|-------------+-------------|
+| Inputs      | Outputs     |
+|-------------+-------------|
+| probes.xlsx | lib10.csv   |
+|             | lib11_1.csv |
+|             | lib11_2.csv |
+|-------------+-------------|
+
+ #+BEGIN_SRC python
+ import os
+ import epride as ep
+ import pandas as pd
+ from collections import defaultdict
+
+ ## Import the data
+
+ probes = pd.ExcelFile("probes.xlsx").parse('probes')
+ pcr_bcs = pd.ExcelFile("probes.xlsx").parse('pcr_barcodes').drop('Sequence', axis=1)
+ other_sequences = pd.ExcelFile("probes.xlsx") \
+                     .parse('other_primers_and_sequences') \
+                     .set_index('Sequence_name')
+ left_side = other_sequences.loc['for_primer_5', 'Sequence']
+ middle = other_sequences.loc['left_probe_5', 'Sequence']
+ right_side = other_sequences.loc['rev_primer_rc', 'Sequence'][:20]
+
+
+ ## Create the template, sample id and bc number dictionaries
+
+ template_dictionary = {}
+ for _, row in probes.iterrows():
+     for seq in ep.expand_primers(row['Target']):
+         template_dictionary[seq] = row['Short_name']
+
+ sample_id_dict = {bc: bc_id for _, (_, bc_id, bc) in pcr_bcs.iterrows()}
+
+ sample_ix_dict = {bc: ix for _, (ix, _, bc) in pcr_bcs.iterrows()}
+
+
+ ## Define the sequence parser
+
+ def seq_parser(fasta_file):
+     for seq_id, seq in ep.read_fasta(fasta_file):
+         if (len(seq) > 133 or len(seq) < 140) and \
+         seq.count(left_side) == 1 and \
+         seq.count(middle) == 1 and \
+         seq.count(right_side) == 1:
+             cluster_id = ''
+             try:
+                 fst_half, long_mid_part = seq.split(middle)
+                 _, bc = fst_half.split(left_side)
+                 mid_part, _ = long_mid_part.split(right_side)
+                 mol_id = mid_part[-10:]
+                 cluster_id = mid_part[8:-10]
+                 if bc in sample_id_dict:
+                     sample_id = sample_id_dict[bc]
+                     sample_ix = sample_ix_dict[bc]
+             except ValueError:
+                 pass
+             if cluster_id in template_dictionary:
+                 cluster = template_dictionary[cluster_id]
+                 yield [sample_ix, sample_id, cluster, mol_id]
+
+ ## And parse the sequences into pandas DataFrames
+
+ lib10 = pd.DataFrame(seq_parser("lib10.fasta"),
+                      columns=['Sample_ix',
+                               'Sample_id',
+                               'Cluster',
+                               'Molecule_id'])
+
+ lib11_1 = pd.DataFrame(seq_parser("lib11_1.fasta"),
+                        columns=['Sample_ix',
+                                 'Sample_id',
+                                 'Cluster',
+                                 'Molecule_id'])
+
+ lib11_2 = pd.DataFrame(seq_parser("lib11_2.fasta"),
+                        columns=['Sample_ix',
+                                 'Sample_id',
+                                 'Cluster',
+                                 'Molecule_id'])
+
+ ## And write out as csvs
+
+ lib10.to_csv("lib10.csv", index=False)
+ lib11_1.to_csv("lib11_1.csv", index=False)
+ lib11_2.to_csv("lib11_2.csv", index=False)
+
+ #+END_SRC
+
+ 
+** Expand the library file (which lists the gene families present in the bacterial genomic DNA samples)
+
+|----------------+-------------------------|
+| Inputs         | Outputs                 |
+|----------------+-------------------------|
+| libraries.xlsx | expanded_libraries.xlsx |
+|----------------+-------------------------|
+
+#+BEGIN_SRC ipython :session
+import os
+import epride as ep
+import pandas as pd
+from collections import defaultdict
+
+## Import the data
+
+libraries = pd.read_excel("libraries.xlsx")
+
+## Expand the table based in the numeric Cluster column
+
+acc = []
+for _, row in libraries.iterrows():
+    cluster = row['Cluster']
+    if isinstance(cluster, int):
+        row1 = row.copy().to_dict()
+        row2 = row.copy().to_dict()
+        row1['Cluster'] = str(cluster) + "_1"
+        row2['Cluster'] = str(cluster) + "_2"
+        acc.append(row1)
+        acc.append(row2)
+    elif "," in cluster:
+        exp_cluster = cluster.split(",")
+        for cluster_instance in exp_cluster:
+            try:
+                cluster_instance = int(cluster_instance)
+                row1 = row.copy().to_dict()
+                row2 = row.copy().to_dict()
+                row1['Cluster'] = str(cluster_instance) + "_1"
+                row2['Cluster'] = str(cluster_instance) + "_2"
+                acc.append(row1)
+                acc.append(row2)
+            except ValueError:
+                pass
+
+exp_libraries = pd.DataFrame(acc)[['Number',
+                                   'Sample_ID',
+                                   'Genes',
+                                   'Cluster',
+                                   'Probes_in_MM_included',
+                                   'Sample_ix',
+                                   'Tube']]
+
+exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
+#+END_SRC
+
+
+** Prepare visualizations of the lib10 and lib11 count tables
+
+|-------------------------+------------------|
+| Inputs                  | Outputs          |
+|-------------------------+------------------|
+| expanded_libraries.xlsx | lib_complete.pdf |
+| lib10.csv               |                  |
+| lib11_1.csv             |                  |
+| lib11_2.csv             |                  |
+|-------------------------+------------------|
+
+ #+BEGIN_SRC R :session
+ library(tidyverse)
+ library(readxl)
+
+ ## Prepare count table for tube 10
+
+ lib10_counts <- read_csv("lib10.csv") %>%
+     unique %>%
+     group_by(Sample_ix, Cluster) %>%
+     summarise(n=n()) %>%
+     spread(key=Cluster, value=n, fill=0) %>%
+     ungroup %>%
+     mutate(Sample_ix = as.factor(Sample_ix)) %>%
+     gather(Cluster, Count, -Sample_ix) %>%
+     mutate(Tube = 10) %>%
+     select(Tube, Sample_ix, Cluster, Count)
+
+ ## Prepare count table for tube 11
+
+ lib11_counts <- rbind(read_csv("lib11_1.csv"),
+                     read_csv("lib11_2.csv")) %>%
+     unique %>%
+     group_by(Sample_ix, Cluster) %>%
+     summarise(n=n()) %>%
+     spread(key=Cluster, value=n, fill=0) %>%
+     ungroup %>%
+     mutate(Sample_ix = as.factor(Sample_ix)) %>%
+     gather(Cluster, Count, -Sample_ix) %>%
+     mutate(Tube = 11) %>%
+     select(Tube, Sample_ix, Cluster, Count)
+
+ ## Merge the count tables
+
+ lib_counts <- rbind(lib10_counts, lib11_counts) %>%
+     spread(Cluster, Count, fill=0) %>%
+     gather(Cluster, Count, -Tube, -Sample_ix)  %>%
+     spread(Sample_ix, Count, fill=0) %>%
+     gather(Sample_ix, Count, -Tube, -Cluster)
+ 
+
+ ## Prepare a logical mask of the sample design
+
+ design <- read_excel("expanded_libraries.xlsx") %>%
+     mutate(Entry = 1) %>%
+     select(Tube, Cluster, Tube, Sample_ix, Entry) %>%
+     unique %>%
+     spread(Cluster, Entry, fill=0) %>%
+     mutate(Sample_ix = as.factor(Sample_ix)) %>%
+     gather(Cluster, Count, -Sample_ix, -Tube) %>%
+     mutate(Mask = Count > 0) %>%
+     select(-Count)
+
+ ## Merge the logical mask with the count tables
+
+ full_lib <- left_join(lib_counts,
+                       design,
+                       by=c("Tube",
+                            "Sample_ix",
+                            "Cluster")) %>%
+     mutate_if(is.logical, replace_na, FALSE) %>%
+     mutate(Cluster = as.factor(Cluster))
+
+ ## Plot as a heatmap and reverse the false positives for visual identification
+
+ full_lib %>% 
+     mutate(Count = ifelse(Mask, Count, -Count),
+            Tube = as.factor(Tube)) %>%
+     ggplot(aes(x=Cluster, y=Sample_ix)) +
+     geom_tile(aes(fill=Count), color="gray") +
+     facet_grid(Tube~.) +
+     scale_fill_gradient2(low = "blue", high = "red", mid="white") +
+     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
+           axis.text.y = element_text(size=5))
+ ggsave("lib_complete.pdf", last_plot())
+ 
+ ## Summarise the clusters per sample per tube
+
+ cluster_summary <- filter(full_lib, Count > 500) %>%
+     separate(Cluster, into=c("Cluster_no", "Cluster_repl"), sep="_") %>%
+     select(-Cluster_repl, -Mask, -Count) %>%
+     group_by(Tube, Sample_ix) %>%
+     summarise(Clusters = paste(unique(Cluster_no), collapse=","))
+ write_delim(cluster_summary, "cluster_summary.csv", delim=";")
+
+
+ t10_dl <- 
+     filter(full_lib, Tube == 10,
+            Sample_ix %in% c(511, 512, 513)) %>%
+     group_by(Cluster) %>% 
+     summarise(mean_cnt = mean(Count, na.rm = TRUE),
+               sd_cnt = sd(Count, na.rm = TRUE),
+               ld = mean_cnt + 3*sd_cnt)
+
+ filter(full_lib, Tube == 10) %>% 
+     filter(!(Sample_ix %in% c(511, 512, 513))) %>%
+     left_join(t10_dl, by="Cluster") %>%
+     ungroup %>% 
+     mutate(Signal = ifelse(Count > ld, 1, 0),
+            Sample_ix = as.factor(Sample_ix),
+            Signal = ifelse(Mask, Signal, -Signal)) %>% 
+     ggplot(aes(x=Cluster, y=Sample_ix)) +
+     geom_tile(aes(fill=Signal)) +
+     scale_fill_gradient2(low = "blue", mid = "white", high = "red") +
+     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
+           axis.text.y = element_text(size=7))
+
+ ggsave("interm1.pdf", last_plot())
+
+ filter(full_lib, Tube == 10) %>% 
+     filter(!(Sample_ix %in% c(511, 512, 513))) %>%
+     left_join(t10_dl, by="Cluster") %>%
+     ungroup %>% 
+     mutate(Signal = ifelse(Count > ld, 1, 0),
+            Sample_ix = as.factor(Sample_ix)) %>% 
+     separate(Cluster, c("Clust", "Repl"), by="_") %>%
+     group_by(Sample_ix, Clust) %>%
+     mutate(Signal = ifelse(sum(Signal) == 2, 1, 0),
+            Signal = ifelse(Mask, Signal, -Signal)) %>% 
+     ggplot(aes(x=Clust, y=Sample_ix)) +
+     geom_tile(aes(fill=Signal)) +
+     scale_fill_gradient2(low = "blue", mid = "white", high = "red") +
+     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
+           axis.text.y = element_text(size=7))
+
+ ggsave("final1.pdf", last_plot())
+
+
+
+ clust_conv <- 
+     read_xlsx("Table_Gates_ProbeTargets.xlsx") %>%
+     select(Cluster, `Enzyme family`) %>%
+     filter(complete.cases(.)) %>%
+     rename(Clust = Cluster,
+            Family = `Enzyme family`)
+
+
+ 
+ filter(full_lib, Tube == 10) %>% 
+     filter(!(Sample_ix %in% c(511, 512, 513))) %>%
+     left_join(t10_dl, by="Cluster") %>%
+     ungroup %>% 
+     mutate(Signal = ifelse(Count > ld, 1, 0),
+            Sample_ix = as.numeric(Sample_ix)) %>% 
+     separate(Cluster, c("Clust", "Repl"), by="_") %>%
+     group_by(Sample_ix, Clust) %>%
+     mutate(Signal = ifelse(sum(Signal) == 2, 1, 0),
+            Signal = ifelse(Mask, Signal, -Signal)) %>%
+     ungroup %>%
+     mutate(Clust = as.numeric(Clust)) %>% 
+     left_join(read_xlsx("sample_conversion.xlsx")) %>%
+     left_join(clust_conv) %>% 
+     ggplot(aes(x=Family, y=Sample_ID)) +
+     geom_tile(aes(fill=Signal)) +
+     scale_fill_gradient2(low = "blue", mid = "white", high = "red") +
+     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
+           axis.text.y = element_text(size=7))
+
+ ggsave("final1.pdf", last_plot())
+
+ 
+ filter(full_lib, Tube == 10) %>% 
+     filter(!(Sample_ix %in% c(511, 512, 513))) %>%
+     left_join(t10_dl, by="Cluster") %>%
+     ungroup %>% 
+     mutate(Signal = ifelse(Count > ld, 1, 0),
+            Sample_ix = as.numeric(Sample_ix)) %>% 
+     separate(Cluster, c("Clust", "Repl"), by="_") %>%
+     group_by(Sample_ix, Clust) %>%
+     mutate(Signal = ifelse(sum(Signal) == 2, 1, 0)) %>%
+     ungroup %>%
+     mutate(Clust = as.numeric(Clust)) %>% 
+     left_join(read_xlsx("sample_conversion.xlsx")) %>%
+     left_join(clust_conv) %>%
+     select(-Tube, -Repl, -Count, -Mask, -mean_cnt, -sd_cnt, -ld) %>%
+     filter(Signal == 1) %>%
+     write_csv("double_positives.csv")
+
+ 
+ filter(full_lib, Tube == 10) %>% 
+     filter(!(Sample_ix %in% c(511, 512, 513))) %>%
+     left_join(t10_dl, by="Cluster") %>%
+     ungroup %>% 
+     mutate(Signal = ifelse(Count > ld, 1, 0),
+            Sample_ix = as.numeric(Sample_ix)) %>% 
+     separate(Cluster, c("Clust", "Repl"), by="_") %>%
+     group_by(Sample_ix, Clust) %>%
+     mutate(Signal = ifelse(sum(Signal) == 2, 1, 0),
+            Signal = ifelse(Mask, Signal, -Signal)) %>% 
+     ungroup %>% 
+     mutate(Clust = as.factor(as.numeric(Clust)),
+            Sample_ix = as.factor(Sample_ix)) %>% 
+     ggplot(aes(x=Clust, y=Sample_ix)) +
+     geom_tile(aes(fill=Signal)) +
+     scale_fill_gradient2(low = "blue", mid = "white", high = "red") +
+     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
+           axis.text.y = element_text(size=7))
+
+ ggsave("final2.pdf", last_plot())
+
+
+
+ conf_mask <-
+     read_xlsx("cluster_confirmation4.xlsx") %>% 
+     gather(Cf, Conf, -Sample_ix, -False1, -False2, -False3) %>%
+     select(-Cf) %>%
+     gather(Fl, False_pos, -Sample_ix, -Conf) %>%
+     select(-Fl) %>%
+     filter(!(is.na(Conf) & is.na(False_pos))) %>%
+     unique %>%
+     mutate(Category = case_when(
+                !is.na(Conf) ~ 3,
+                !is.na(False_pos) ~ 4)) %>%
+     gather(Type, Clust, -Sample_ix, -Category) %>%
+     filter(complete.cases(.)) %>%
+     select(-Type)
+
+
+ signal_tbl <- 
+     filter(full_lib, Tube == 10) %>% 
+     filter(!(Sample_ix %in% c(511, 512, 513))) %>%
+     left_join(t10_dl, by="Cluster") %>%
+     ungroup %>% 
+     mutate(Signal = ifelse(Count > ld, 1, 0),
+            Sample_ix = as.numeric(Sample_ix)) %>% 
+     separate(Cluster, c("Clust", "Repl"), by="_") %>%
+     group_by(Sample_ix, Clust) %>%
+     mutate(Signal = ifelse(sum(Signal) == 2, 1, 0),
+            Signal = ifelse(Mask, Signal, -Signal)) %>%
+     ungroup %>%
+     mutate(Clust = as.numeric(Clust)) %>%
+     full_join(conf_mask) %>%
+     left_join(read_xlsx("sample_conversion.xlsx")) %>%
+     left_join(clust_conv) %>%
+     select(-mean_cnt, -sd_cnt, -ld) %>% 
+     mutate(Sign = case_when(
+                Signal == -1 ~ 2,
+                is.na(Category) ~ Signal,
+                !is.na(Category) ~ Category),
+            Sign = ifelse(Signal == 0, 0, Sign),
+            Sign = as.factor(Sign))
+
+
+ ggplot(signal_tbl, aes(x=Family, y=Sample_ID)) +
+     geom_tile(aes(fill=Sign)) +
+     scale_fill_manual(values = c("white", "red", "blue", "green", "orange")) +
+     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
+           axis.text.y = element_text(size=7))
+ ggsave("final5.pdf", last_plot())
+ 
+ ggplot(signal_tbl, aes(x=Family, y=Sample_ID)) +
+     geom_tile(aes(fill=Sign)) +
+     scale_fill_manual(values = c("white", "red", "blue", "green", "orange")) +
+     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
+           axis.text.y = element_text(size=7))
+
+ ggsave("final4.pdf", last_plot())
+
+ signal_tbl %>%
+     mutate(Clust = as.factor(Clust),
+            Sample_ix = as.factor(Sample_ix)) %>% 
+     ggplot(aes(x=Clust, y=Sample_ix)) +
+     geom_tile(aes(fill=Sign)) +
+     scale_fill_manual(values = c("white", "red", "blue", "green", "orange")) +
+     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
+           axis.text.y = element_text(size=7))
+
+ ggsave("overlaid.pdf", last_plot())
+
+ signal_tbl %>%
+     mutate(Clust = as.factor(Clust),
+            Sample_ix = as.factor(Sample_ix),
+            Signal = as.factor(Signal)) %>% 
+     ggplot(aes(x=Clust, y=Sample_ix)) +
+     geom_tile(aes(fill=Signal)) +
+     scale_fill_manual(values = c("blue", "white", "red")) +
+     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
+           axis.text.y = element_text(size=7))
+ ggsave("non_overlaid.pdf", last_plot())
+
+ full_lib %>% 
+     mutate(Count = ifelse(Mask, Count, -Count),
+            Tube = as.factor(Tube)) %>% 
+     filter(Tube == 10) %>% 
+     separate(Cluster, c("Clust", "Repl"), by="_") %>% 
+     mutate(Sample_ix = as.numeric(Sample_ix),
+            Clust = as.numeric(Clust),
+            Count = abs(Count)) %>%
+     left_join(read_xlsx("sample_conversion.xlsx")) %>%
+     left_join(clust_conv) %>% 
+     filter(Repl != 3,
+            Family != "KPC") %>% 
+     unite(Fam_rep, Family, Repl, sep=" replicate") %>% 
+     ggplot(aes(x=Fam_rep, y=Sample_ID)) +
+     geom_tile(aes(fill=Count), color="gray") +
+     scale_fill_gradient2(low = "blue", high = "red", mid="white") +
+     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
+           axis.text.y = element_text(size=5))
+ ggsave("raw.pdf", last_plot())
+
+ 
+ lib1 <- 
+     full_lib %>% 
+     mutate(Count = ifelse(Mask, Count, -Count),
+            Tube = as.factor(Tube)) %>% 
+     filter(Tube == 10) %>% 
+     separate(Cluster, c("Clust", "Repl"), by="_") %>% 
+     mutate(Sample_ix = as.numeric(Sample_ix),
+            Clust = as.numeric(Clust),
+            Count = abs(Count)) %>%
+     left_join(read_xlsx("sample_conversion.xlsx")) %>%
+     left_join(clust_conv) %>% 
+     filter(Repl != 3,
+            Family != "KPC") %>% 
+     select(Family, Repl, Sample_ID, Count)
+
+ lib2 <-
+     signal_tbl %>%
+     select(Family, Repl, Sample_ID, Sign)
+
+ left_join(lib1, lib2) %>% 
+     unite(Fam_rep, Family, Repl, sep=" replicate") %>% 
+     ggplot(aes(x=Fam_rep, y=Sample_ID)) +
+     geom_tile(aes(fill=Count, color=Sign), size=1) +
+     scale_fill_gradient2(low = "blue", high = "red", mid="white") +
+     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
+           axis.text.y = element_text(size=5))
+ ggsave("raw_joined.pdf", last_plot())
+
+ 
+
+ #+END_SRC
+
+
+* 2) Figure S01
   
 ** Prepare the joined reads and quality filter using nsearch
 
@@ -320,6 +839,7 @@ nsearch merge --forward=NG-13024_6_lib237855_5794_7_1.fastq.gz --reverse=NG-1302
 
 ls *.fastq | grep -v lib | while read file; do nsearch filter --in $file --out filt_$file; done
 #+END_SRC
+
 
 
 ** Process the quality-filtered sequences into count tables
@@ -456,7 +976,10 @@ C_14_2 = C14_3_oh2_L + C14_3_oh2_R
 C_15_1 = C15_1_oh2_L + C15_1_oh2_R 
 C_15_2 = C15_2_oh2_L + C15_2_oh2_R 
 
-template_names = ["C_0_1", "C_0_2", "C_1_1", "C_1_2", "C_2_1", "C_2_2", "C_3_1", "C_3_2", "C_4_1", "C_4_2", "C_5_1", "C_5_2", "C_6_1", "C_6_2", "C_7_1", "C_7_2", "C_8_1", "C_8_2", "C_9_1", "C_9_2", "C_10_1", "C_10_2", "C_12_1", "C_12_2", "C_13_1", "C_13_2", "C_14_1", "C_14_2", "C_15_1", "C_15_2"]
+template_names = ["C_0_1", "C_0_2", "C_1_1", "C_1_2", "C_2_1", "C_2_2", "C_3_1", "C_3_2",
+                  "C_4_1", "C_4_2", "C_5_1", "C_5_2", "C_6_1", "C_6_2", "C_7_1", "C_7_2",
+                  "C_8_1", "C_8_2", "C_9_1", "C_9_2", "C_10_1", "C_10_2", "C_12_1",
+                  "C_12_2", "C_13_1", "C_13_2", "C_14_1", "C_14_2", "C_15_1", "C_15_2"]
 
 ## Prepare the sample id dictionaries
 
@@ -851,273 +1374,6 @@ ggplot(conc_counts2, aes(x=Molecule_concentration, y=Estimator, color=Tar_Rep)) 
     theme_bw()
 dev.off()
 #+END_SRC
-
-
-* 3) Figure 4
-
-** With the sequencing data back, join the paired ends and quality filter using nsearch
-
-|-----------------------------------------+---------------|
-| Inputs                                  | Outputs       |
-|-----------------------------------------+---------------|
-| NG-17872_10_lib297291_6185_1_1.fastq.gz | lib10.fasta   |
-| NG-17872_11_lib297292_6178_3_1.fastq.gz | lib11_1.fasta |
-| NG-17872_11_lib297292_6189_3_1.fastq.gz | lib11_2.fasta |
-| NG-17872_10_lib297291_6185_1_1.fastq.gz |               |
-| NG-17872_11_lib297292_6178_3_1.fastq.gz |               |
-| NG-17872_11_lib297292_6189_3_1.fastq.gz |               |
-|-----------------------------------------+---------------|
-
- #+BEGIN_SRC sh
- nsearch merge --forward NG-17872_10_lib297291_6185_1_1.fastq.gz --reverse NG-17872_10_lib297291_6185_1_2.fastq.gz --out lib10.fastq
- nsearch merge --forward NG-17872_11_lib297292_6178_3_1.fastq.gz --reverse NG-17872_11_lib297292_6178_3_2.fastq.gz --out lib11_1.fastq
- nsearch merge --forward NG-17872_11_lib297292_6189_3_1.fastq.gz --reverse NG-17872_11_lib297292_6189_3_2.fastq.gz --out lib11_2.fastq
-
- nsearch filter --in lib10.fastq --out lib10.fasta
- nsearch filter --in lib11_1.fastq --out lib11_1.fasta
- nsearch filter --in lib11_2.fastq --out lib11_2.fasta
- #+END_SRC
-
-
-** Then process the merged, quality-filtered sequences into count tables on Python
-
-|-------------+-------------|
-| Inputs      | Outputs     |
-|-------------+-------------|
-| probes.xlsx | lib10.csv   |
-|             | lib11_1.csv |
-|             | lib11_2.csv |
-|-------------+-------------|
-
- #+BEGIN_SRC python
- import os
- import epride as ep
- import pandas as pd
- from collections import defaultdict
-
- ## Import the data
-
- probes = pd.ExcelFile("probes.xlsx").parse('probes')
- pcr_bcs = pd.ExcelFile("probes.xlsx").parse('pcr_barcodes').drop('Sequence', axis=1)
- other_sequences = pd.ExcelFile("probes.xlsx") \
-                     .parse('other_primers_and_sequences') \
-                     .set_index('Sequence_name')
- left_side = other_sequences.loc['for_primer_5', 'Sequence']
- middle = other_sequences.loc['left_probe_5', 'Sequence']
- right_side = other_sequences.loc['rev_primer_rc', 'Sequence'][:20]
-
-
- ## Create the template, sample id and bc number dictionaries
-
- template_dictionary = {}
- for _, row in probes.iterrows():
-     for seq in ep.expand_primers(row['Target']):
-         template_dictionary[seq] = row['Short_name']
-
- sample_id_dict = {bc: bc_id for _, (_, bc_id, bc) in pcr_bcs.iterrows()}
-
- sample_ix_dict = {bc: ix for _, (ix, _, bc) in pcr_bcs.iterrows()}
-
-
- ## Define the sequence parser
-
- def seq_parser(fasta_file):
-     for seq_id, seq in ep.read_fasta(fasta_file):
-         if (len(seq) > 133 or len(seq) < 140) and \
-         seq.count(left_side) == 1 and \
-         seq.count(middle) == 1 and \
-         seq.count(right_side) == 1:
-             cluster_id = ''
-             try:
-                 fst_half, long_mid_part = seq.split(middle)
-                 _, bc = fst_half.split(left_side)
-                 mid_part, _ = long_mid_part.split(right_side)
-                 mol_id = mid_part[-10:]
-                 cluster_id = mid_part[8:-10]
-                 if bc in sample_id_dict:
-                     sample_id = sample_id_dict[bc]
-                     sample_ix = sample_ix_dict[bc]
-             except ValueError:
-                 pass
-             if cluster_id in template_dictionary:
-                 cluster = template_dictionary[cluster_id]
-                 yield [sample_ix, sample_id, cluster, mol_id]
-
- ## And parse the sequences into pandas DataFrames
-
- lib10 = pd.DataFrame(seq_parser("lib10.fasta"),
-                      columns=['Sample_ix',
-                               'Sample_id',
-                               'Cluster',
-                               'Molecule_id'])
-
- lib11_1 = pd.DataFrame(seq_parser("lib11_1.fasta"),
-                        columns=['Sample_ix',
-                                 'Sample_id',
-                                 'Cluster',
-                                 'Molecule_id'])
-
- lib11_2 = pd.DataFrame(seq_parser("lib11_2.fasta"),
-                        columns=['Sample_ix',
-                                 'Sample_id',
-                                 'Cluster',
-                                 'Molecule_id'])
-
- ## And write out as csvs
-
- lib10.to_csv("lib10.csv", index=False)
- lib11_1.to_csv("lib11_1.csv", index=False)
- lib11_2.to_csv("lib11_2.csv", index=False)
-
- #+END_SRC
-
- 
-** Expand the library file (which lists the gene families present in the bacterial genomic DNA samples)
-
-|----------------+-------------------------|
-| Inputs         | Outputs                 |
-|----------------+-------------------------|
-| libraries.xlsx | expanded_libraries.xlsx |
-|----------------+-------------------------|
-
-#+BEGIN_SRC ipython :session
-import os
-import epride as ep
-import pandas as pd
-from collections import defaultdict
-
-## Import the data
-
-libraries = pd.read_excel("libraries.xlsx")
-
-## Expand the table based in the numeric Cluster column
-
-acc = []
-for _, row in libraries.iterrows():
-    cluster = row['Cluster']
-    if isinstance(cluster, int):
-        row1 = row.copy().to_dict()
-        row2 = row.copy().to_dict()
-        row1['Cluster'] = str(cluster) + "_1"
-        row2['Cluster'] = str(cluster) + "_2"
-        acc.append(row1)
-        acc.append(row2)
-    elif "," in cluster:
-        exp_cluster = cluster.split(",")
-        for cluster_instance in exp_cluster:
-            try:
-                cluster_instance = int(cluster_instance)
-                row1 = row.copy().to_dict()
-                row2 = row.copy().to_dict()
-                row1['Cluster'] = str(cluster_instance) + "_1"
-                row2['Cluster'] = str(cluster_instance) + "_2"
-                acc.append(row1)
-                acc.append(row2)
-            except ValueError:
-                pass
-
-exp_libraries = pd.DataFrame(acc)[['Number',
-                                   'Sample_ID',
-                                   'Genes',
-                                   'Cluster',
-                                   'Probes_in_MM_included',
-                                   'Sample_ix',
-                                   'Tube']]
-
-exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
-#+END_SRC
-
-
-** Prepare visualizations of the lib10 and lib11 count tables
-
-|-------------------------+------------------|
-| Inputs                  | Outputs          |
-|-------------------------+------------------|
-| expanded_libraries.xlsx | lib_complete.pdf |
-| lib10.csv               |                  |
-| lib11_1.csv             |                  |
-| lib11_2.csv             |                  |
-|-------------------------+------------------|
-
- #+BEGIN_SRC R :session
- library(tidyverse)
- library(readxl)
-
- ## Prepare count table for tube 10
-
- lib10_counts <- read_csv("lib10.csv") %>%
-     unique %>%
-     group_by(Sample_ix, Cluster) %>%
-     summarise(n=n()) %>%
-     spread(key=Cluster, value=n, fill=0) %>%
-     ungroup %>%
-     mutate(Sample_ix = as.factor(Sample_ix)) %>%
-     gather(Cluster, Count, -Sample_ix) %>%
-     mutate(Tube = 10) %>%
-     select(Tube, Sample_ix, Cluster, Count)
-
- ## Prepare count table for tube 11
-
- lib11_counts <- rbind(read_csv("lib11_1.csv"),
-                     read_csv("lib11_2.csv")) %>%
-     unique %>%
-     group_by(Sample_ix, Cluster) %>%
-     summarise(n=n()) %>%
-     spread(key=Cluster, value=n, fill=0) %>%
-     ungroup %>%
-     mutate(Sample_ix = as.factor(Sample_ix)) %>%
-     gather(Cluster, Count, -Sample_ix) %>%
-     mutate(Tube = 11) %>%
-     select(Tube, Sample_ix, Cluster, Count)
-
- ## Merge the count tables
-
- lib_counts <- rbind(lib10_counts, lib11_counts)
-
- ## Prepare a logical mask of the sample design
-
- design <- read_excel("expanded_libraries.xlsx") %>%
-     mutate(Entry = 1) %>%
-     select(Tube, Cluster, Tube, Sample_ix, Entry) %>%
-     unique %>%
-     spread(Cluster, Entry, fill=0) %>%
-     mutate(Sample_ix = as.factor(Sample_ix)) %>%
-     gather(Cluster, Count, -Sample_ix, -Tube) %>%
-     mutate(Mask = Count > 0) %>%
-     select(-Count)
-
- ## Merge the logical mask with the count tables
-
- full_lib <- left_join(lib_counts,
-                       design,
-                       by=c("Tube",
-                            "Sample_ix",
-                            "Cluster")) %>%
-     mutate_if(is.logical, replace_na, FALSE) %>%
-     mutate(Cluster = as.factor(Cluster))
-
- ## Plot as a heatmap and reverse the false positives for visual identification
-
- mutate(full_lib,
-        Count = ifelse(Mask, Count, -Count),
-        Tube = as.factor(Tube)) %>%
-     ggplot(aes(x=Cluster, y=Sample_ix)) +
-     geom_tile(aes(fill=Count), color="gray") +
-     facet_grid(Tube~.) +
-     scale_fill_gradient2(low = "blue", high = "red", mid="white") +
-     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-           axis.text.y = element_text(size=5))
- ggsave("lib_complete.pdf", last_plot())
-
- ## Summarise the clusters per sample per tube
-
- cluster_summary <- filter(full_lib, Count > 500) %>%
-     separate(Cluster, into=c("Cluster_no", "Cluster_repl"), sep="_") %>%
-     select(-Cluster_repl, -Mask, -Count) %>%
-     group_by(Tube, Sample_ix) %>%
-     summarise(Clusters = paste(unique(Cluster_no), collapse=","))
- write_delim(cluster_summary, "cluster_summary.csv", delim=";")
- #+END_SRC
 
 
 * 4) Session info
