@@ -195,6 +195,8 @@ first_20 = [[[i]  + j for j in koe[i]] for i in range(20)]
 
  #+BEGIN_SRC R :session
 
+ library(readxl)
+
  all_probes <-
      read_excel("all_probes.xlsx", sheet = "probes")
 
@@ -218,13 +220,12 @@ first_20 = [[[i]  + j for j in koe[i]] for i in range(20)]
 |----------------+-------------------------|
 
  #+BEGIN_SRC python
- seq_acc = []
+ seq_acc = set()
  with open("exp_probes.csv") as ep:
      next(ep)
      for ix, line in enumerate(ep):
          seq = line.split(",")[4].strip()
-         seq_acc.append(seq)
- seq_set = set(seq_acc)
+         seq_acc.add(seq)
 
  probe_acc = []
  with open("probe_hits.csv") as ph:
@@ -253,8 +254,16 @@ first_20 = [[[i]  + j for j in koe[i]] for i in range(20)]
 |-------------------------+--------------|
 
  #+BEGIN_SRC R :session
+
+ library(tidyverse)
+ library(stringr)
+ library(readxl)
+ 
  selected_hits <-
      read_csv("selected_probe_hits.csv", col_names=FALSE)
+
+ exp_probes <-
+     read_csv("exp_probes.csv")
 
  probe_coverage <-
      left_join(exp_probes, selected_hits, by=c("Exp" = "X7")) %>%
@@ -277,7 +286,9 @@ first_20 = [[[i]  + j for j in koe[i]] for i in range(20)]
      separate(allele_name, into=c("type"), sep="-", remove=FALSE) %>%
      mutate(size = stop - start) %>%
      select(protein_accession, type, size) %>%
-     left_join(probe_coverage, by=c("protein_accession" = "Seq")) %>%
+     left_join(probe_coverage, by=c("protein_accession" = "Seq"))
+
+ %>%
      with(paste(protein_accession, type, size, Probes, sep=","))
 
  gdf <- c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE,probe VARCHAR",
@@ -286,8 +297,64 @@ first_20 = [[[i]  + j for j in koe[i]] for i in range(20)]
           con2)
          
  write(gdf, "clusters.gdf")
+
+ probe_targets <-
+     left_join(selected_hits, exp_probes, c("X7" = "Exp")) %>%
+     separate(X2, c("protein_accession", "Junk"), " ") %>%
+     select(X1, protein_accession, Name) %>%
+     left_join(annotation)
+
+ multiple_targets <- 
+     probe_targets %>%
+     group_by(Probes, type) %>%
+     summarise(n=n()) %>%
+     group_by(Probes) %>%
+     summarise(n=n()) %>%
+     arrange(desc(n)) %>%
+     filter(n > 1, complete.cases(.)) %>%
+     pull(Probes)
+
+ mult_targeting_probes <- 
+     probe_targets %>%
+     filter(Probes %in% multiple_targets) %>%
+     group_by(Probes, type) %>%
+     summarise(n=n()) %>%
+     separate(Probes, c("Fst", "Snd"), ";") %>%
+     select(Fst, Snd)
+ mult_targeting_probes <-
+     c(mult_targeting_probes$Fst, mult_targeting_probes$Snd) %>%
+     unique
+
+ all_probes <-
+     read_excel("all_probes.xlsx", sheet = "probes")
+
+ all_probes %>% mutate(
+                  A = str_count(Target, "A"),
+                  T = str_count(Target, "T"),
+                  G = str_count(Target, "G"),
+                  C = str_count(Target, "C"),
+                  Non_deg = A + T + C + G) %>%
+     filter(Name %in% mult_targeting_probes)
+
+ all_probes %>% mutate(
+                  A = str_count(Target, "A"),
+                  T = str_count(Target, "T"),
+                  G = str_count(Target, "G"),
+                  C = str_count(Target, "C"),
+                  Non_deg = A + T + C + G) %>%
+     ggplot(aes(x=Non_deg)) +
+     geom_density() +
+     geom_vline(aes(xintercept=28)) +
+     geom_vline(aes(xintercept=31)) +
+     geom_vline(aes(xintercept=32))
+ ggsave("degen_density.pdf", last_plot())
+
  #+END_SRC
 
+
+ 2 C14_2_oh2;C14_3_oh2                                         3
+ 3 C3_1b_oh2;C3_2b_oh2                                         3
+ 4 C7_2_oh2;C7_3_oh2                                           2
  
 * 3) Figure 3
 
@@ -650,6 +717,7 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
      left_join(clust_conv) %>%
      select(-Tube, -Repl, -Count, -Mask, -mean_cnt, -sd_cnt, -ld) %>%
      filter(Signal == 1) %>%
+
      write_csv("double_positives.csv")
 
  
