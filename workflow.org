@@ -872,6 +872,18 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
  ggsave("raw_joined.pdf", last_plot())
 
  
+ left_join(lib1, lib2) %>% 
+     unite(Fam_rep, Family, Repl, sep=" replicate") %>%
+     filter(complete.cases(.),
+            Sign != 0) %>%
+     pull(Sample_ID)
+
+ left_join(lib1, lib2) %>% 
+     unite(Fam_rep, Family, Repl, sep=" replicate") %>%
+     pull(Sample_ID) %>%
+     unique %>%
+     length
+ 
 
  #+END_SRC
 
