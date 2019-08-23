@@ -1,363 +1,5 @@
 * 1) Figure 2
 
-** Design probe candidates for the ESBL genes usign a set coverage algorithm implemented in epride
-
-#+BEGIN_SRC ipython :session
-import epride as ep
-esbl_primers = ep.Primers("Allele.dna.fa", id_val=0.8, primer_length=40)
-first_20 = [[[i]  + j for j in koe[i]] for i in range(20)]
-#+END_SRC
-
-
-** Prepare the 40-mer probe candidates
-   
-|---------------+-------------------|
-| Inputs        | Outputs           |
-|---------------+-------------------|
-| Allele-dna.fa | probe_cands.fasta |
-|---------------+-------------------|
-
- #+BEGIN_SRC R
- library(tidyverse)
- library(readxl)
- library(Biostrings)
- library(igraph)
- library(DECIPHER)
- library(stringi)
- library(glue)
- library(readxl)
-
- sliding_window <- function(sequence, win_size=20)
- {
-     win_size <- win_size - 1
-     split_sequence <- strsplit(sequence, split="")[[1]]
-     num_chunks <- length(split_sequence) - win_size
-     acc <- vector(mode = "character",
-                   length = num_chunks)
-     for (i in 1:num_chunks)
-     {
-         sub_seq <- paste(split_sequence[i : (i + win_size)],
-                          collapse = "")
-         acc[i] <- sub_seq
-     }
-     acc
- }
-
- deg_list <-
-     list(
-         'A' = 'A',
-         'T' = 'T',
-         'G' = 'G',
-         'C' = 'C',
-         '-' = '-',
-         'W' = c('A', 'T'),
-         'S' = c('C', 'G'),
-         'M' = c('A', 'C'),
-         'K' = c('G', 'T'),
-         'R' = c('A', 'G'),
-         'Y' = c('C', 'T'),
-         'B' = c('C', 'G', 'T'),
-         'D' = c('A', 'G', 'T'),
-         'H' = c('A', 'C', 'G'),
-         'V' = c('A', 'C', 'T'),
-         'N' = c('A', 'C', 'G', 'T'))
-
- expand_seq <- function(seq)
- {
-     seq_lst <-
-         strsplit(seq, "") %>%
-         unlist %>%
-         map(~deg_list[[.x]]) %>%
-         purrr::reduce(~as.vector(outer(.x, .y, paste, sep="")))
-     if (identical(seq_lst, character(0)))
-     {
-         stop("Not a DNA sequence!")
-     } else {
-         seq_lst
-     }
- }
-
- fasta_to_df <- function(filename)
- {
-     fasta <- readDNAStringSet(filename)
-     seqs <- as.character(fasta)
-     names(seqs) <- NA
-     tibble(Name = names(fasta),
-            Sequence = seqs)
- }
- 
- primer_candidates <-
-     fasta_to_df("Allele-dna.fa") %>% 
-     mutate(Exp = map(Sequence,
-                      sliding_window(as.character,
-                                     win_size = 40))) %>%
-     select(-Sequence) %>%
-     unnest(Exp) %>%
-     group_by(Name) %>%
-     mutate(Ix = row_number()) %>%
-     separate(Name, into=c("Prot_id"), sep=" ") %>%
-     unite(Fasta_id, Prot_id, Ix, sep="_")
-
- primer_candidates %>% 
-     mutate(Out = glue(">{Fasta_id}\n{Exp}\n")) %>% 
-     pull(Out) %>%
-     write("probe_cands.fasta")
- #+END_SRC
-
-
-** Prepare the BLAST search table
-
-|-------------------+----------------|
-| Inputs            | Outputs        |
-|-------------------+----------------|
-| probe_cands.fasta | probe_hits.csv |
-|-------------------+----------------|
-
- #+BEGIN_SRC sh 
- nsearch search --query=probe_cands.fasta --db=Allele-dna.fa --out=probe_hits.csv --min-identity=0.8 --strand=both --max-hits=1558
- #+END_SRC
-
-
-** Then parse the resulting output file "probe_hits.csv" using a memory-efficient Python script
-
-|----------------+------------------|
-| Inputs         | Outputs          |
-|----------------+------------------|
-| probe_hits.csv | probe_counts.csv |
-|----------------+------------------|
-
- #+BEGIN_SRC python
- import sys
- from collections import defaultdict
-
- acc = defaultdict(int)
- with open('probe_hits.csv') as fh:
-     next(fh)
-     for ix, ln in enumerate(fh):
-         broken = ln.split(",")
-         fst = broken[0].replace("WP_", "WP").split("_")[0]
-         fst = fst.replace("WP", "WP_")
-         snd = broken[1].replace("WP_", "WP").split(" ")[0]
-         snd = snd.replace("WP", "WP_")
-         qlength = int(broken[3]) - int(broken[2])
-         tlength = int(broken[5]) - int(broken[4])
-         to_acc = ",".join(sorted([fst, snd]))
-         if ((qlength == tlength) and (qlength == 39) and (fst != snd)):
-             acc[to_acc] += 1
-         if (ix % 100000 == 0):
-             print(ix)
-
- with open('probe_counts.csv', 'w') as fh:
-     for key, val in acc.items():
-         fh.write(key + "\n")
- #+END_SRC
-
-
-** Prepare the gdf file from probe_counts.csv
-
-|------------------+--------------|
-| Inputs           | Outputs      |
-|------------------+--------------|
-| probe_counts.csv | clusters.gdf |
-|------------------+--------------|
-
- #+BEGIN_SRC R :session
-
- con2 <- read_csv("probe_counts.csv", col_names=FALSE) %>%
-     unite(Netw, X1, X2, sep=",") %>%
-     pull(Netw)
-
- annotation <- read.delim("Allele.tab", sep="\t") %>%
-     separate(allele_name, into=c("type"), sep="-", remove=FALSE) %>%
-     mutate(size = stop - start) %>%
-     select(protein_accession, type, size) %>%
-     with(paste(protein_accession, type, size, sep=","))
-
- gdf <- c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE",
-          annotation,
-          "edgedef>node1 VARCHAR,node2 VARCHAR",
-          con2)
-         
- write(gdf, "clusters.gdf")
-
- #+END_SRC
-
-
-** Prepare also the gdf such that our primer designs are also shown in the network
-
-*** Start by expanding our probe designs (all_probes.xlsx) into non-degenerate versions
-
-|-----------------+----------------|
-| Inputs          | Outputs        |
-|-----------------+----------------|
-| all_probes.xlsx | exp_probes.csv |
-|-----------------+----------------|
-
- #+BEGIN_SRC R :session
-
- library(readxl)
-
- all_probes <-
-     read_excel("all_probes.xlsx", sheet = "probes")
-
- exp_probes <- 
-     all_probes %>%
-     mutate(Exp = map(Target, expand_seq)) %>%
-     unnest
-
- write_csv(exp_probes, "exp_probes.csv")
-
- #+END_SRC
-
-
-*** Then filter out their target ranges using a memory-efficient Python script
-
-|----------------+-------------------------|
-| Inputs         | Outputs                 |
-|----------------+-------------------------|
-| exp_probes.csv | selected_probe_hits.csv |
-| probe_hits.csv |                         |
-|----------------+-------------------------|
-
- #+BEGIN_SRC python
- seq_acc = set()
- with open("exp_probes.csv") as ep:
-     next(ep)
-     for ix, line in enumerate(ep):
-         seq = line.split(",")[4].strip()
-         seq_acc.add(seq)
-
- probe_acc = []
- with open("probe_hits.csv") as ph:
-     next(ph)
-     for ix, line in enumerate(ph):
-         seq = line.split(",")[6]
-         if seq in seq_set:
-             probe_acc.append(line)
-         if (ix % 1000 == 0):
-             print(ix)
-        
- with open("selected_probe_hits.csv", "w") as out:
-     for line in probe_acc:
-         out.write(line)
- #+END_SRC
-
-
-*** Process the resulting selected probe hits file "selected_probe_hits.csv" into gdf annotation
-
-|-------------------------+--------------|
-| Inputs                  | Outputs      |
-|-------------------------+--------------|
-| selected_probe_hits.csv | clusters.gdf |
-| probe_counts.csv        |              |
-| Allele.tab              |              |
-|-------------------------+--------------|
-
- #+BEGIN_SRC R :session
-
- library(tidyverse)
- library(stringr)
- library(readxl)
- 
- selected_hits <-
-     read_csv("selected_probe_hits.csv", col_names=FALSE)
-
- exp_probes <-
-     read_csv("exp_probes.csv")
-
- probe_coverage <-
-     left_join(exp_probes, selected_hits, by=c("Exp" = "X7")) %>%
-     select(Name, X1) %>%
-     filter(complete.cases(.)) %>%
-     unique %>%
-     mutate(X1 = str_replace(X1, "WP_", "WP")) %>%
-     separate(X1, c("Seq"), "_") %>%
-     mutate(Seq = str_replace(Seq, "WP", "WP_")) %>%
-     unique %>%
-     group_by(Seq) %>%
-     summarise(Probes = paste(sort(Name), collapse=";"))
-
- con2 <- read_csv("probe_counts.csv", col_names=FALSE) %>%
-     unite(Netw, X1, X2, sep=",") %>%
-     pull(Netw)
-
- annotation <-
-     read.delim("Allele.tab", sep="\t") %>%
-     separate(allele_name, into=c("type"), sep="-", remove=FALSE) %>%
-     mutate(size = stop - start) %>%
-     select(protein_accession, type, size) %>%
-     left_join(probe_coverage, by=c("protein_accession" = "Seq"))
-
- %>%
-     with(paste(protein_accession, type, size, Probes, sep=","))
-
- gdf <- c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE,probe VARCHAR",
-          annotation,
-          "edgedef>node1 VARCHAR,node2 VARCHAR",
-          con2)
-         
- write(gdf, "clusters.gdf")
-
- probe_targets <-
-     left_join(selected_hits, exp_probes, c("X7" = "Exp")) %>%
-     separate(X2, c("protein_accession", "Junk"), " ") %>%
-     select(X1, protein_accession, Name) %>%
-     left_join(annotation)
-
- multiple_targets <- 
-     probe_targets %>%
-     group_by(Probes, type) %>%
-     summarise(n=n()) %>%
-     group_by(Probes) %>%
-     summarise(n=n()) %>%
-     arrange(desc(n)) %>%
-     filter(n > 1, complete.cases(.)) %>%
-     pull(Probes)
-
- mult_targeting_probes <- 
-     probe_targets %>%
-     filter(Probes %in% multiple_targets) %>%
-     group_by(Probes, type) %>%
-     summarise(n=n()) %>%
-     separate(Probes, c("Fst", "Snd"), ";") %>%
-     select(Fst, Snd)
- mult_targeting_probes <-
-     c(mult_targeting_probes$Fst, mult_targeting_probes$Snd) %>%
-     unique
-
- all_probes <-
-     read_excel("all_probes.xlsx", sheet = "probes")
-
- all_probes %>% mutate(
-                  A = str_count(Target, "A"),
-                  T = str_count(Target, "T"),
-                  G = str_count(Target, "G"),
-                  C = str_count(Target, "C"),
-                  Non_deg = A + T + C + G) %>%
-     filter(Name %in% mult_targeting_probes)
-
- all_probes %>% mutate(
-                  A = str_count(Target, "A"),
-                  T = str_count(Target, "T"),
-                  G = str_count(Target, "G"),
-                  C = str_count(Target, "C"),
-                  Non_deg = A + T + C + G) %>%
-     ggplot(aes(x=Non_deg)) +
-     geom_density() +
-     geom_vline(aes(xintercept=28)) +
-     geom_vline(aes(xintercept=31)) +
-     geom_vline(aes(xintercept=32))
- ggsave("degen_density.pdf", last_plot())
-
- #+END_SRC
-
-
- 2 C14_2_oh2;C14_3_oh2                                         3
- 3 C3_1b_oh2;C3_2b_oh2                                         3
- 4 C7_2_oh2;C7_3_oh2                                           2
- 
-* 3) Figure 3
-
 ** With the sequencing data back, join the paired ends and quality filter using nsearch
 
 |-----------------------------------------+---------------|
@@ -548,7 +190,8 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
 
  ## Prepare count table for tube 10
 
- lib10_counts <- read_csv("lib10.csv") %>%
+ lib10_counts <-
+     read_csv("lib10.csv") %>%
      unique %>%
      group_by(Sample_ix, Cluster) %>%
      summarise(n=n()) %>%
@@ -561,8 +204,10 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
 
  ## Prepare count table for tube 11
 
- lib11_counts <- rbind(read_csv("lib11_1.csv"),
-                     read_csv("lib11_2.csv")) %>%
+ lib11_counts <-
+     rbind(
+         read_csv("lib11_1.csv"),
+         read_csv("lib11_2.csv")) %>%
      unique %>%
      group_by(Sample_ix, Cluster) %>%
      summarise(n=n()) %>%
@@ -575,7 +220,8 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
 
  ## Merge the count tables
 
- lib_counts <- rbind(lib10_counts, lib11_counts) %>%
+ lib_counts <-
+     rbind(lib10_counts, lib11_counts) %>%
      spread(Cluster, Count, fill=0) %>%
      gather(Cluster, Count, -Tube, -Sample_ix)  %>%
      spread(Sample_ix, Count, fill=0) %>%
@@ -584,7 +230,8 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
 
  ## Prepare a logical mask of the sample design
 
- design <- read_excel("expanded_libraries.xlsx") %>%
+ design <-
+     read_excel("expanded_libraries.xlsx") %>%
      mutate(Entry = 1) %>%
      select(Tube, Cluster, Tube, Sample_ix, Entry) %>%
      unique %>%
@@ -596,11 +243,10 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
 
  ## Merge the logical mask with the count tables
 
- full_lib <- left_join(lib_counts,
-                       design,
-                       by=c("Tube",
-                            "Sample_ix",
-                            "Cluster")) %>%
+ full_lib <-
+     left_join(lib_counts,
+               design,
+               by=c("Tube", "Sample_ix", "Cluster")) %>%
      mutate_if(is.logical, replace_na, FALSE) %>%
      mutate(Cluster = as.factor(Cluster))
 
@@ -619,7 +265,8 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
  
  ## Summarise the clusters per sample per tube
 
- cluster_summary <- filter(full_lib, Count > 500) %>%
+ cluster_summary <-
+     filter(full_lib, Count > 500) %>%
      separate(Cluster, into=c("Cluster_no", "Cluster_repl"), sep="_") %>%
      select(-Cluster_repl, -Mask, -Count) %>%
      group_by(Tube, Sample_ix) %>%
@@ -635,7 +282,8 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
                sd_cnt = sd(Count, na.rm = TRUE),
                ld = mean_cnt + 3*sd_cnt)
 
- filter(full_lib, Tube == 10) %>% 
+ full_lib %>% 
+     filter(Tube == 10) %>% 
      filter(!(Sample_ix %in% c(511, 512, 513))) %>%
      left_join(t10_dl, by="Cluster") %>%
      ungroup %>% 
@@ -650,7 +298,8 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
 
  ggsave("interm1.pdf", last_plot())
 
- filter(full_lib, Tube == 10) %>% 
+ full_lib %>% 
+     filter(Tube == 10) %>% 
      filter(!(Sample_ix %in% c(511, 512, 513))) %>%
      left_join(t10_dl, by="Cluster") %>%
      ungroup %>% 
@@ -678,8 +327,8 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
             Family = `Enzyme family`)
 
 
- 
- filter(full_lib, Tube == 10) %>% 
+ full_lib %>% 
+     filter(Tube == 10) %>% 
      filter(!(Sample_ix %in% c(511, 512, 513))) %>%
      left_join(t10_dl, by="Cluster") %>%
      ungroup %>% 
@@ -701,8 +350,8 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
 
  ggsave("final1.pdf", last_plot())
 
- 
- filter(full_lib, Tube == 10) %>% 
+ full_lib %>% 
+     filter(Tube == 10) %>% 
      filter(!(Sample_ix %in% c(511, 512, 513))) %>%
      left_join(t10_dl, by="Cluster") %>%
      ungroup %>% 
@@ -720,8 +369,8 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
 
      write_csv("double_positives.csv")
 
- 
- filter(full_lib, Tube == 10) %>% 
+ full_lib %>% 
+     filter(Tube == 10) %>% 
      filter(!(Sample_ix %in% c(511, 512, 513))) %>%
      left_join(t10_dl, by="Cluster") %>%
      ungroup %>% 
@@ -739,7 +388,6 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
      scale_fill_gradient2(low = "blue", mid = "white", high = "red") +
      theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
            axis.text.y = element_text(size=7))
-
  ggsave("final2.pdf", last_plot())
 
 
@@ -761,7 +409,8 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
 
 
  signal_tbl <- 
-     filter(full_lib, Tube == 10) %>% 
+     full_lib %>% 
+     filter(Tube == 10) %>% 
      filter(!(Sample_ix %in% c(511, 512, 513))) %>%
      left_join(t10_dl, by="Cluster") %>%
      ungroup %>% 
@@ -888,575 +537,362 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
  #+END_SRC
 
 
-* 2) Figure S01
-  
-** Prepare the joined reads and quality filter using nsearch
+* 2) Figure S01 
 
-|----------------------------------------+-----------------------|
-| Inputs                                 | Outputs               |
-|----------------------------------------+-----------------------|
-| NG-13024_1_lib236478_5794_7_1.fastq.gz | filt_NG-13024_1.fasta |
-| NG-13024_2_lib236478_5794_7_1.fastq.gz | filt_NG-13024_2.fasta |
-| NG-13024_3_lib236478_5794_7_1.fastq.gz | filt_NG-13024_3.fasta |
-| NG-13024_4_lib236478_5794_7_1.fastq.gz | filt_NG-13024_4.fasta |
-| NG-13024_5_lib236478_5794_7_1.fastq.gz | filt_NG-13024_5.fasta |
-| NG-13024_6_lib236478_5794_7_1.fastq.gz | filt_NG-13024_6.fasta |
-| NG-13024_1_lib236478_5794_7_2.fastq.gz |                       |
-| NG-13024_2_lib236478_5794_7_2.fastq.gz |                       |
-| NG-13024_3_lib236478_5794_7_2.fastq.gz |                       |
-| NG-13024_4_lib236478_5794_7_2.fastq.gz |                       |
-| NG-13024_5_lib236478_5794_7_2.fastq.gz |                       |
-| NG-13024_6_lib236478_5794_7_2.fastq.gz |                       |
-|----------------------------------------+-----------------------|
-
-#+BEGIN_SRC sh
-nsearch merge --forward=NG-13024_1_lib236478_5794_7_1.fastq.gz --reverse=NG-13024_1_lib236478_5794_7_2.fastq.gz --out=NG-13024_1.fastq
-nsearch merge --forward=NG-13024_2_lib236479_5794_7_1.fastq.gz --reverse=NG-13024_2_lib236479_5794_7_2.fastq.gz --out=NG-13024_2.fastq
-nsearch merge --forward=NG-13024_3_lib236480_5794_7_1.fastq.gz --reverse=NG-13024_3_lib236480_5794_7_2.fastq.gz --out=NG-13024_3.fastq
-nsearch merge --forward=NG-13024_4_lib237853_5794_7_1.fastq.gz --reverse=NG-13024_4_lib237853_5794_7_2.fastq.gz --out=NG-13024_4.fastq
-nsearch merge --forward=NG-13024_5_lib237854_5794_7_1.fastq.gz --reverse=NG-13024_5_lib237854_5794_7_2.fastq.gz --out=NG-13024_5.fastq
-nsearch merge --forward=NG-13024_6_lib237855_5794_7_1.fastq.gz --reverse=NG-13024_6_lib237855_5794_7_2.fastq.gz --out=NG-13024_6.fastq
-
-ls *.fastq | grep -v lib | while read file; do nsearch filter --in $file --out filt_$file; done
-#+END_SRC
-
-
-
-** Process the quality-filtered sequences into count tables
+** Prepare the 40-mer probe candidates
    
-|-----------------------+-------------------|
-| Inputs                | Outputs           |
-|-----------------------+-------------------|
-| filt_NG-13024_1.fasta | mol_bc_counts.csv |
-| filt_NG-13024_2.fasta | mol_bcs.csv       |
-| filt_NG-13024_3.fasta |                   |
-| filt_NG-13024_4.fasta |                   |
-| filt_NG-13024_5.fasta |                   |
-| filt_NG-13024_6.fasta |                   |
-|-----------------------+-------------------|
+|---------------+-------------------|
+| Inputs        | Outputs           |
+|---------------+-------------------|
+| Allele-dna.fa | probe_cands.fasta |
+|---------------+-------------------|
 
-#+BEGIN_SRC python
+ #+BEGIN_SRC R
+ library(tidyverse)
+ library(readxl)
+ library(Biostrings)
+ library(igraph)
+ library(DECIPHER)
+ library(stringi)
+ library(glue)
+ library(readxl)
 
-import os
-import epride as ep
-import pandas as pd
-from collections import defaultdict
+ sliding_window <- function(sequence, win_size=20)
+ {
+     win_size <- win_size - 1
+     split_sequence <- strsplit(sequence, split="")[[1]]
+     num_chunks <- length(split_sequence) - win_size
+     acc <- vector(mode = "character",
+                   length = num_chunks)
+     for (i in 1:num_chunks)
+     {
+         sub_seq <- paste(split_sequence[i : (i + win_size)],
+                          collapse = "")
+         acc[i] <- sub_seq
+     }
+     acc
+ }
 
-## Prepare read counts
+ deg_list <-
+     list(
+         'A' = 'A',
+         'T' = 'T',
+         'G' = 'G',
+         'C' = 'C',
+         '-' = '-',
+         'W' = c('A', 'T'),
+         'S' = c('C', 'G'),
+         'M' = c('A', 'C'),
+         'K' = c('G', 'T'),
+         'R' = c('A', 'G'),
+         'Y' = c('C', 'T'),
+         'B' = c('C', 'G', 'T'),
+         'D' = c('A', 'G', 'T'),
+         'H' = c('A', 'C', 'G'),
+         'V' = c('A', 'C', 'T'),
+         'N' = c('A', 'C', 'G', 'T'))
 
-fasta_files = [i for i in os.listdir() if "filt" in i and "fasta" in i[-5:]]
+ expand_seq <- function(seq)
+ {
+     seq_lst <-
+         strsplit(seq, "") %>%
+         unlist %>%
+         map(~deg_list[[.x]]) %>%
+         purrr::reduce(~as.vector(outer(.x, .y, paste, sep="")))
+     if (identical(seq_lst, character(0)))
+     {
+         stop("Not a DNA sequence!")
+     } else {
+         seq_lst
+     }
+ }
 
-for fasta_file in fasta_files:
-    print(fasta_file)
-    output_file = fasta_file + ".txt"
-    len_counter = defaultdict(int)
-    for seq_id, seq in ep.read_fasta(fasta_file):
-        len_counter[len(seq)] += 1
-    pd.Series(len_counter).to_csv(output_file)
-
-
-## Prepare the template signatures
-
-C0_1b_oh2_L = "CCCTTWTTCCCTTTYTTGCG"
-C0_3b_oh2_L = "TAAGCCCTCCCGTATCGTAK"
-C1_2b_oh2_L = "ATCARGATTTASCTCGTCGT"
-C1_3b_oh2_L = "CCVACAAGTRGGYTGGTTAA"
-C2_2_oh2_L = "GCCGYCATTACCRTGAGCGA"
-C2_3_oh2_L = "CTGYCGGCGGGCTGGTTTAT"
-C3_1b_oh2_L = "AGTCACKCARCAWACKCTGT"
-C3_2b_oh2_L = "GCRCTAARMGWYTTTAYKCT"
-C4_1_oh2_L = "CCATCAGCCTGAAAGGARAA"
-C4_2_oh2_L = "CARCCTGCTCGACCTCGCGA"
-C5_1_oh2_L = "AGTTCACGCTSATGGCGACG"
-C5_3_oh2_L = "CCACCAAYGATATCGCGGTG"
-C6_1_oh2_L = "TATRATGTRCCNGGTATGGC"
-C6_2_oh2_L = "TCAGARCARATYGTGATGAA"
-C7_2_oh2_L = "ARCCHCTYARNCTGRACCAT"
-C7_3_oh2_L = "AAGMRBMRCATTWCGCCWGG"
-C8_2_oh2_L = "GRAGGCGTGACGGCTTTTGC"
-C8_3_oh2_L = "CGTCTGGATCGCACTGAABV"
-C10_1_oh2_L = "CGAARAACACRGYRGCMCTT"
-C10_2_oh2_L = "CGCACTTYCATGACGAYCGM"
-C13_1_oh2_L = "AGCAGCTSAGATCGGTGTTG"
-C13_3_oh2_L = "GCCTCTGTCGGTCAAGTTAT"
-C14_2_oh2_L = "GTCARYGAGCAGACSCTGTT"
-C14_3_oh2_L = "GATVGSCRTCGTCATGCTGG"
-C15_1_oh2_L = "AAGTTATTCCTGTTGGYTGG"
-C15_2_oh2_L = "ACCATGCTAAGCGAYATGGA"
-C9_1b_oh2_L = "WTRARARTYGARARRCTYGA"
-C9_2b_oh2_L = "TTTYCATRGYGAYAGYDCRG"
-C9_3b_oh2_L = "GGAATWGRRTGGCTTAAYTC"
-C12_1b_oh2_L = "MMGARGAARTYTATGGVAAT"
-C12_2b_oh2_L = "AYGGHCARAARCGYTTRTTT"
-C12_3b_oh2_L = "YTTRTTTCCYGAYTGGRAAA"
-
-C0_1b_oh2_R = "GCWTTTTGCVTTCCTGTTTT"
-C0_3b_oh2_R = "TTATBTACAYGACGGKGRGT"
-C1_2b_oh2_R = "ATTGGRCTTGARCTYATGTC"
-C1_3b_oh2_R = "CTGRATSGRTTGTTMRGCCT"
-C2_2_oh2_R = "TAACAGCGYCGCCAATYTGC"
-C2_3_oh2_R = "CGCCGATARGRCCGGAGCTR"
-C3_1b_oh2_R = "TTGARYTMGGNTCGGTYAGT"
-C3_2b_oh2_R = "AACTCCAGCATTGGTCTKTT"
-C4_1_oh2_R = "CCGCATTACTTCAGCTATGG"
-C4_2_oh2_R = "CCTATACCGCCGGCGGCTTG"
-C5_1_oh2_R = "GCARCCGTCACGCTGTTRTT"
-C5_3_oh2_R = "ATYTGGCCAAAAGATCGTGC"
-C6_1_oh2_R = "YGTGGGBGTYATTCARAATA"
-C6_2_oh2_R = "RCCTAATAAAGTGACYGCYA"
-C7_2_oh2_R = "ACHTGGATTAACGTBCCSAA"
-C7_3_oh2_R = "GGVTAYCGYGABGGTAARGC"
-C8_2_oh2_R = "CCGCKMGATCGGCGATGAGA"
-C8_3_oh2_R = "TACGCWGAATACCGCCATTC"
-C10_1_oh2_R = "CTCGCGGAGATTGARAAGCA"
-C10_2_oh2_R = "GTCGGYGGMGTTGATGYCCT"
-C13_1_oh2_R = "CGATCGTCGATCCCCAAGGA"
-C13_3_oh2_R = "TACACAACTCATCCTGAGCA"
-C14_2_oh2_R = "CGAKATWGGVTCSGTSAGCA"
-C14_3_oh2_R = "CCAAYCGCAACTMYCCYAWC"
-C15_1_oh2_R = "GCTGATGGTTTRCTCAACTG"
-C15_2_oh2_R = "BAGCGGCAAACTCAACAAAA"
-C9_1b_oh2_R = "VRAHGRYGTTTWTSTTCATA"
-C9_2b_oh2_R = "SNGGAATWGRRTGGCTTAAY"
-C9_3b_oh2_R = "TCRRTCVATYYCMACRTATG"
-C12_1b_oh2_R = "GATVTDAAAAGRKCAYCAAC"
-C12_2b_oh2_R = "CCYGAYTGGRAAAARGAYAT"
-C12_3b_oh2_R = "ARGAYATGACNYTRRGYRAT"
-
-C_0_1 = C0_1b_oh2_L + C0_1b_oh2_R 
-C_0_2 = C0_3b_oh2_L + C0_3b_oh2_R 
-C_1_1 = C1_2b_oh2_L + C1_2b_oh2_R 
-C_1_2 = C1_3b_oh2_L + C1_3b_oh2_R 
-C_2_1 = C2_2_oh2_L + C2_2_oh2_R 
-C_2_2 = C2_3_oh2_L + C2_3_oh2_R 
-C_3_1 = C3_1b_oh2_L + C3_1b_oh2_R 
-C_3_2 = C3_2b_oh2_L + C3_2b_oh2_R 
-C_4_1 = C4_1_oh2_L + C4_1_oh2_R 
-C_4_2 = C4_2_oh2_L + C4_2_oh2_R 
-C_5_1 = C5_1_oh2_L + C5_1_oh2_R 
-C_5_2 = C5_3_oh2_L + C5_3_oh2_R 
-C_6_1 = C6_1_oh2_L + C6_1_oh2_R 
-C_6_2 = C6_2_oh2_L + C6_2_oh2_R 
-C_7_1 = C7_2_oh2_L + C7_2_oh2_R 
-C_7_2 = C7_3_oh2_L + C7_3_oh2_R 
-C_8_1 = C8_2_oh2_L + C8_2_oh2_R 
-C_8_2 = C8_3_oh2_L + C8_3_oh2_R 
-# C_9_1 = C9_1b_oh2_L + C9_1b_oh2_R 
-C_9_1 = C9_2b_oh2_L + C9_2b_oh2_R
-C_9_2 = C9_3b_oh2_L + C9_3b_oh2_R
-C_10_1 = C10_1_oh2_L + C10_1_oh2_R 
-C_10_2 = C10_2_oh2_L + C10_2_oh2_R 
-# C_12_1 = C12_1b_oh2_L + C12_1b_oh2_R 
-C_12_1 = C12_2b_oh2_L + C12_2b_oh2_R 
-C_12_2 = C12_3b_oh2_L + C12_3b_oh2_R 
-C_13_1 = C13_1_oh2_L + C13_1_oh2_R 
-C_13_2 = C13_3_oh2_L + C13_3_oh2_R 
-C_14_1 = C14_2_oh2_L + C14_2_oh2_R 
-C_14_2 = C14_3_oh2_L + C14_3_oh2_R 
-C_15_1 = C15_1_oh2_L + C15_1_oh2_R 
-C_15_2 = C15_2_oh2_L + C15_2_oh2_R 
-
-template_names = ["C_0_1", "C_0_2", "C_1_1", "C_1_2", "C_2_1", "C_2_2", "C_3_1", "C_3_2",
-                  "C_4_1", "C_4_2", "C_5_1", "C_5_2", "C_6_1", "C_6_2", "C_7_1", "C_7_2",
-                  "C_8_1", "C_8_2", "C_9_1", "C_9_2", "C_10_1", "C_10_2", "C_12_1",
-                  "C_12_2", "C_13_1", "C_13_2", "C_14_1", "C_14_2", "C_15_1", "C_15_2"]
-
-## Prepare the sample id dictionaries
-
-template_dictionary = {}
-for t_name in template_names:
-    seq_list = ep.expand_primers(globals()[t_name])
-    for seq in seq_list:
-        template_dictionary[seq] = t_name
-
-sample_id_dict = {"ATAAGAC": "bc1",
-                  "GAACACA": "bc2",
-                  "ACATTCA": "bc3",
-                  "TCGCTAG": "bc4",
-                  "ATCATTA": "bc5",
-                  "TGTATGT": "bc6",
-                  "TAAGATA": "bc7",
-                  "CGTTTCA": "bc8",
-                  "ACGTTGC": "bc9",
-                  "TAGATGA": "bc10"}
-
-smp1 = {"bc1": "1_a",
-        "bc2": "2_a",
-        "bc3": "3_a",
-        "bc4": "4_a",
-        "bc5": "5_a",
-        "bc6": "6_a",
-        "bc7": "7_a",
-        "bc8": "8_a",
-        "bc9": "9_a",
-        "bc10": "10_b"}
-
-smp2 = {"bc1": "1_b",
-        "bc2": "2_b",
-        "bc3": "3_b",
-        "bc4": "4_b",
-        "bc5": "5_b",
-        "bc6": "6_b",
-        "bc7": "7_b",
-        "bc8": "8_b",
-        "bc9": "9_b",
-        "bc10": "11_a"}
-
-smp3 = {"bc1": "NA",
-        "bc2": "2_c",
-        "bc3": "3_c",
-        "bc4": "4_c",
-        "bc5": "5_c",
-        "bc6": "6_c",
-        "bc7": "7_c",
-        "bc8": "8_c",
-        "bc9": "10_a",
-        "bc10": "11_b"}
-
-smp4 = {"bc1": "13_a",
-        "bc2": "14_a",
-        "bc3": "15_a",
-        "bc4": "16_a",
-        "bc5": "17_a",
-        "bc6": "18_a",
-        "bc7": "19_a",
-        "bc8": "20_a",
-        "bc9": "NA",
-        "bc10": "NA"}
-
-smp5 = {"bc1": "13_b",
-        "bc2": "14_b",
-        "bc3": "15_b",
-        "bc4": "16_b",
-        "bc5": "17_b",
-        "bc6": "18_b",
-        "bc7": "19_b",
-        "bc8": "20_b",
-        "bc9": "NA",
-        "bc10": "NA"}
-
-smp6 = {"bc1": "13_c",
-        "bc2": "14_c",
-        "bc3": "15_c",
-        "bc4": "16_c",
-        "bc5": "17_c",
-        "bc6": "18_c",
-        "bc7": "19_c",
-        "bc8": "20_c",
-        "bc9": "NA",
-        "bc10": "NA"}
-
-sample_type_dict = {"filt_NG-13024_1": smp1,
-                    "filt_NG-13024_2": smp2,
-                    "filt_NG-13024_3": smp3,
-                    "filt_NG-13024_4": smp4,
-                    "filt_NG-13024_5": smp5,
-                    "filt_NG-13024_6": smp6}
-
-## Filter the sequences and identify the template signatures
-
-def seq_predicate(seq):
-    if len(seq) == 178 and \
-       seq[:33] == "TCTTTTCGCAGGCTGGAGCCCAGGTCTTCCTAT" and \
-       seq[40:60] == "TGGGCCCAATTTTCCGTGAC" and \
-       seq[118:] == "GAATGAGTGTGCGTGCACTCTCATTGGGTTTGAGATAAGGTACCGAGAAGGCGGAACCCA" and \
-       seq[33:40] in sample_id_dict:
-        return True
-
-def seq_parser(fasta_file):
-    trunc_fasta_file = fasta_file.split(".")[0]
-    for seq_id, seq in ep.read_fasta(fasta_file):
-        if seq_predicate(seq):
-            bc = seq[33:40]
-            mid_part = seq[60:118]
-            mol_id = mid_part[-10:]
-            cluster_id = mid_part[8:-10]
-            sample_id = sample_id_dict[bc]
-            sample_type = sample_type_dict[trunc_fasta_file][sample_id]
-            if cluster_id in template_dictionary:
-                cluster = template_dictionary[cluster_id]
-                yield [sample_id, sample_type, cluster, mol_id]
-
-def get_count_table(fasta_file):
-    print(fasta_file)
-    seq_iter = seq_parser(fasta_file)
-    seq_series = pd.DataFrame(seq_iter, columns=['Primer_barcode',
-                                                 'Sample_type',
-                                                 'Molecule_type',
-                                                 'Molecule_barcode'])
-    seq_table = seq_series.groupby(seq_series.columns.tolist(),
-                                   as_index=False).size().rename("Count").reset_index()
-    seq_table['File'] = fasta_file.split(".")[0]
-    return seq_table
-
-def get_non_aggr_count_table(fasta_file):
-    print(fasta_file)
-    seq_iter = seq_parser(fasta_file)
-    seq_series = pd.DataFrame(seq_iter, columns=['Primer_barcode',
-                                                 'Sample_type',
-                                                 'Molecule_type',
-                                                 'Molecule_barcode'])
-    seq_series['File'] = fasta_file.split(".")[0]
-    return seq_series
-
-acc = [get_count_table(tbl) for tbl in fasta_files]
-mol_counts = pd.concat(acc)
-mol_counts = mol_counts.loc[mol_counts['Sample_type'] != 'NA']
-mol_counts.to_csv("mol_bc_counts.csv", index=False)
-
-acc = [get_non_aggr_count_table(tbl) for tbl in fasta_files]
-mol_counts = pd.concat(acc)
-mol_counts = mol_counts.loc[mol_counts['Sample_type'] != 'NA']
-mol_counts.to_csv("mol_bcs.csv", index=False)
-
-#+END_SRC
-
-
-** Then plot the count table
-   
-|-------------------+--------------------------------|
-| Inputs            | Outputs                        |
-|-------------------+--------------------------------|
-| mol_bc_counts.csv | samples2-8.pdf                 |
-| conc_gradient.csv | samples9-11.pdf                |
-|                   | samples13-20.pdf               |
-|                   | rarefaction.pdf                |
-|                   | dilution_rarefaction.pdf       |
-|                   | trunc_dilution_rarefaction.pdf |
-|                   | stds.pdf                       |
-|-------------------+--------------------------------|
-
-#+BEGIN_SRC R :session
-library(data.table)
-library(plyr)
-library(tidyverse)
-library(iNEXT)
-
-## Input and clean up the count and barcode data
-mol_bc_counts <- fread("mol_bc_counts.csv")
-mol_bc_counts[, c("Sample", "Sample_replicate") := tstrsplit(Sample_type, "_", fixed=TRUE)]
-mol_bc_counts[, c("Stuffer", "Molecule_target", "Molecule_replicate") := tstrsplit(Molecule_type, "_", fixed=TRUE)]
-mol_bc_counts <- mol_bc_counts[!(Molecule_target %in% c(9,12))]
-
-mol_counts <- mol_bc_counts[, .(Tot_reads=sum(Count), Count=.N),
-                            by=.(Sample, Sample_replicate, Molecule_target, Molecule_replicate)]
-mol_counts[, Molecule_target := factor(Molecule_target, levels=as.character(c(0:10, 12:15)))]
-mol_counts[, Sample := factor(Sample, levels=as.character(c(1:11, 13:20)))]
-
-
-## Test the significances for the synthetic templates
-mc2 <- mol_counts[Sample %in% 2:8, c('Sample', 'Sample_replicate', 'Molecule_replicate', 'Molecule_target', 'Count')] %>%
-    unite(MRMT, Molecule_target, Molecule_replicate, sep="_") %>%
-    spread(MRMT, Count, fill=0) %>%
-    gather(MRMT, Count, -Sample, -Sample_replicate) %>%
-    separate(MRMT, c("Molecule_target", "Molecule_replicate"), "_") %>%
-    select(-Sample_replicate)
-
-blanks <-
-    mc2 %>%
-    filter(Sample %in% 3)
-
-non_blanks <-
-    mc2 %>%
-    filter(Sample %in% c(2, 4:8)) %>% 
-    left_join(blanks, by=c('Molecule_replicate', 'Molecule_target')) %>%
-    group_by(Sample.x, Molecule_replicate, Molecule_target) %>%
-    mutate(pval = tidy(wilcox.test(Count.x, Count.y, alternative = "greater"))$p.value * 6,
-           is_sig = ifelse(pval < 0.005, "Sig", "Non_sig")) %>%
-    select(-Sample.y, -Count.y) %>%
-    rename(Sample = Sample.x,
-           Count = Count.x)
-
-ggplot(non_blanks, aes(x=Molecule_target, y=Count, fill=Molecule_replicate, color=is_sig)) +
-    geom_boxplot() +
-    facet_grid(Sample~.) +
-    theme_bw() +
-    theme(legend.position="none")
-
-
-
-## Test the significances for the bacterial genomic templates
-
-mc2 <- mol_counts[Sample %in% 13:19, c('Sample', 'Sample_replicate', 'Molecule_replicate', 'Molecule_target', 'Count')] %>%
-    unite(MRMT, Molecule_target, Molecule_replicate, sep="_") %>%
-    spread(MRMT, Count, fill=0) %>%
-    gather(MRMT, Count, -Sample, -Sample_replicate) %>%
-    separate(MRMT, c("Molecule_target", "Molecule_replicate"), "_") %>%
-    select(-Sample_replicate)
-
-
-blanks <-
-    mc2 %>%
-    filter(Sample %in% 19)
-
-
-non_blanks <-
-    mc2 %>%
-    filter(Sample %in% 13:18) %>% 
-    left_join(blanks, by=c('Molecule_replicate', 'Molecule_target')) %>%
-    group_by(Sample.x, Molecule_replicate, Molecule_target) %>%
-    mutate(pval = tidy(wilcox.test(Count.x, Count.y, alternative = "greater"))$p.value * 6,
-           is_sig = ifelse(pval < 0.005, "Sig", "Non_sig")) %>%
-    select(-Sample.y, -Count.y) %>%
-    rename(Sample = Sample.x,
-           Count = Count.x)
-
-ggplot(non_blanks, aes(x=Molecule_target, y=Count, fill=Molecule_replicate, color=is_sig)) +
-    geom_boxplot() +
-    facet_grid(Sample~.) +
-    theme_bw() +
-    theme(legend.position="none")
-
-
-## Prepare the box plots of the different treatments.
-pdf("samples_2-8.pdf")
-mol_counts[Sample %in% 2:8,] %>% 
-    ggplot(aes(x=Molecule_target, y=Count, color=Molecule_replicate)) +
-    geom_boxplot() +
-    facet_grid(Sample~.) +
-    theme_bw() +
-    theme(legend.position="none")
-
-dev.off()
-
-pdf("samples_9-11.pdf")
-mol_counts[Sample %in% 9:11,] %>% 
-    ggplot(aes(x=Molecule_target, y=Count, color=Molecule_replicate)) +
-    geom_boxplot() +
-    facet_grid(Sample~.) +
-    theme(legend.position="none")
-dev.off()
-
-pdf("samples_13-20.pdf")
-
-mol_counts[Sample %in% 13:20,] %>% 
-    ggplot(aes(x=Molecule_target, y=Count, color=Molecule_replicate)) +
-    geom_boxplot() +
-    facet_grid(Sample~.) +
-    theme(legend.position="none")
-
-dev.off()
-
-## Prepare rarefaction curves for different sequencing cases.
-filt_mol_counts <- mol_bc_counts[(Sample == 2) |
-                                (Sample == 4 & Molecule_target %in% 0:7) |
-                                (Sample == 5 & Molecule_target %in% c(8, 10, 13:15)) |
-                                (Sample == 6 & Molecule_target %in% 0:4) |
-                                (Sample == 7 & Molecule_target %in% 5:8) |
-                                (Sample == 8 & Molecule_target %in% c(10, 13:15))]
-bc_lists <- dlply(filt_mol_counts, .(Sample, Molecule_target, Molecule_replicate), function(x) x$Count)
-rarefaction_list <- llply(bc_lists, function(x) iNEXT(x, q=0, datatype="abundance"), .progress = "text")
-rarefaction_table_list <- llply(rarefaction_list, function(x) fortify(x, type=1))
-rarefaction_tables <-
-    melt(rarefaction_table_list,
-         id.vars=c("datatype", "plottype", "site", "method", "order", "x", "y", "y.lwr", "y.upr")) %>%
-    data.table
-rarefaction_tables[, c("Sample", "Molecule_target", "Molecule_replicate") := tstrsplit(L1, ".", fixed=TRUE)]
-rarefaction_tables.point <- rarefaction_tables[which(rarefaction_tables$method=="observed"),]
-rarefaction_tables.line <- rarefaction_tables[which(rarefaction_tables$method!="observed"),]
-rarefaction_tables.line$method <- factor(rarefaction_tables.line$method, 
-                         c("interpolated", "extrapolated"),
-                         c("interpolation", "extrapolation"))
-rarefaction_tables <- rarefaction_tables[method == "interpolated"]
+ fasta_to_df <- function(filename)
+ {
+     fasta <- readDNAStringSet(filename)
+     seqs <- as.character(fasta)
+     names(seqs) <- NA
+     tibble(Name = names(fasta),
+            Sequence = seqs)
+ }
  
-pdf("rarefaction.pdf")
-ggplot(rarefaction_tables, aes(x=x, y=y, colour=Molecule_target)) + 
-  geom_line(aes(group=L1), data=rarefaction_tables.line) +
-  geom_abline(intercept = 0, slope = 1, linetype="dashed") +
-  facet_grid(Sample ~ Molecule_replicate, scales="free") + 
-  labs(x="Number of sampled barcodes", y="Barcode diversity")
-dev.off()
+ primer_candidates <-
+     fasta_to_df("Allele-dna.fa") %>% 
+     mutate(Exp = map(Sequence,
+                      sliding_window(as.character,
+                                     win_size = 40))) %>%
+     select(-Sequence) %>%
+     unnest(Exp) %>%
+     group_by(Name) %>%
+     mutate(Ix = row_number()) %>%
+     separate(Name, into=c("Prot_id"), sep=" ") %>%
+     unite(Fasta_id, Prot_id, Ix, sep="_")
 
-## Prepare rarefaction curves for the dilution-to-extinction-samples
-mol_bc_counts <- fread("mol_bc_counts.csv")
-mol_bc_counts[, c("Sample", "Sample_replicate") := tstrsplit(Sample_type, "_", fixed=TRUE)]
-mol_bc_counts[, c("Stuffer", "Molecule_target", "Molecule_replicate") := tstrsplit(Molecule_type, "_", fixed=TRUE)]
-mol_bc_counts <- mol_bc_counts[!(Molecule_target %in% c(9,12))]
-mol_bc_counts <- mol_bc_counts[Sample %in% 9:11]
-
-concs <- fread("conc_gradient.csv")
-bc_lists <- dlply(mol_bc_counts, .(Sample, Molecule_target, Molecule_replicate), function(x) x$Count)
-rarefaction_list <- llply(bc_lists, function(x) iNEXT(x, q=0, datatype="abundance"), .progress = "text")
-rarefaction_table_list <- llply(rarefaction_list, function(x) fortify(x, type=1))
-rarefaction_tables <- melt(rarefaction_table_list, id.vars=c("datatype", "plottype", "site", "method", "order", "x", "y", "y.lwr", "y.upr")) %>% data.table
-rarefaction_tables[, c("Sample", "Molecule_target", "Molecule_replicate") := tstrsplit(L1, ".", fixed=TRUE)]
-numeric_cols <- names(rarefaction_tables)[c(11, 12, 13)]
-rarefaction_tables[, (numeric_cols) := lapply(.SD, as.numeric), .SDcols=numeric_cols]
-conc_counts <- merge(concs, rarefaction_tables, by=c("Sample", "Molecule_target", "Molecule_replicate"))
-conc_counts[, Molecule_target := as.factor(Molecule_target)]
-conc_counts.point <- conc_counts[which(conc_counts$method=="observed"),]
-conc_counts.line <- conc_counts[which(conc_counts$method!="observed"),]
-conc_counts.line$method <- factor(conc_counts.line$method, 
-                         c("interpolated", "extrapolated"),
-                         c("interpolation", "extrapolation"))
-conc_counts <- conc_counts[method == "interpolated"]
-conc_counts$Molecule_concentration <- as.factor(conc_counts$Molecule_concentration)
-conc_counts.line$Molecule_concentration <- as.factor(conc_counts.line$Molecule_concentration)
-
-pdf("dilution_rarefaction.pdf")
-ggplot(conc_counts, aes(x=x, y=y, colour=Molecule_concentration)) + 
-  geom_line(aes(group=L1), data=conc_counts.line) +
-  geom_abline(intercept = 0, slope = 1, linetype="dashed") +
-  facet_grid(Sample ~ ., scales="free") + 
-  labs(x="Number of sampled barcodes", y="Barcode diversity")
-dev.off()
-
-pdf("trunc_dilution_rarefaction.pdf")
-ggplot(conc_counts, aes(x=x, y=y, colour=Molecule_concentration)) + 
-  geom_line(aes(group=L1), data=conc_counts.line) +
-  geom_abline(intercept = 0, slope = 1, linetype="dashed") +
-  facet_grid(Sample ~ ., scales="free") + 
-    labs(x="Number of sampled barcodes", y="Barcode diversity") +
-    scale_y_continuous(limits = c(0, 800)) +
-    scale_x_continuous(limits = c(0, 750))
-dev.off()
-
-## Corrected for random sampling
-
-mol_bc_counts <- fread("mol_bc_counts.csv")
-mol_bc_counts[, c("Sample", "Sample_replicate") := tstrsplit(Sample_type, "_", fixed=TRUE)]
-mol_bc_counts[, c("Stuffer", "Molecule_target", "Molecule_replicate") := tstrsplit(Molecule_type, "_", fixed=TRUE)]
-mol_bc_counts <- mol_bc_counts[!(Molecule_target %in% c(9,12))]
-mol_bc_counts <- mol_bc_counts[Sample %in% 9:11]
-bc_lists <- dlply(mol_bc_counts, .(Sample, Molecule_target, Molecule_replicate, Sample_replicate), function(x) x$Count)
-rarefaction_list <- llply(bc_lists, function(x) iNEXT(x, q=0, datatype="abundance"), .progress = "text")
-rarefaction_estimates <- llply(rarefaction_list, function(x)
-{
-    df <- data.frame(x$AsyEst)
-    df$Analysis <- c("Species_richness", "Shannon_diversity", "Simpson_diversity")
-    return(df)
-}) %>%
-    melt(id.vars=c("Observed", "Estimator", "Est_s.e.", "X95..Lower",
-                     "X95..Upper", "Analysis"))
-rarefaction_estimates <- separate(rarefaction_estimates, L1,
-                                 c("Sample", "Molecule_target",
-                                   "Molecule_replicate", "Sample_replicate")) %>%
-    unite(L1, Sample, Molecule_target, Molecule_replicate, sep=".")
-richness <- rarefaction_estimates[rarefaction_estimates$Analysis == "Species_richness",]
-concs <- fread("conc_gradient.csv")
-concs$L1 <- apply(concs[, c("Sample", "Molecule_target", "Molecule_replicate")], 1, paste, collapse = ".")
-conc_richness <- merge(concs, richness, by="L1")
-conc_richness$Sample <- as.factor(conc_richness$Sample)
-conc_richness$Molecule_target <- as.factor(conc_richness$Molecule_target)
-conc_richness$Molecule_replicate <- as.factor(conc_richness$Molecule_replicate)
-conc_counts2 <- unite(conc_richness, Tar_Rep, Molecule_target, Molecule_replicate, sep="_", remove=FALSE)
-conc_counts2 <- filter(conc_counts2, !(Tar_Rep %in% c("4_1", "3_1", "0_1", "6_2", "8_1")))
-
-pdf("stds.pdf", useDingbats = FALSE)
-ggplot(conc_counts2, aes(x=Molecule_concentration, y=Estimator, color=Tar_Rep)) +
-    geom_point() +
-    geom_smooth(method='lm', se=FALSE) +
-    geom_hline(yintercept = range(37.16)) +
-    geom_hline(yintercept = range(60.75), linetype="dashed") +
-    geom_hline(yintercept = range(107.93), linetype="dotted") +
-    scale_x_log10() +
-    scale_y_log10() +
-    theme_bw()
-dev.off()
-#+END_SRC
+ primer_candidates %>% 
+     mutate(Out = glue(">{Fasta_id}\n{Exp}\n")) %>% 
+     pull(Out) %>%
+     write("probe_cands.fasta")
+ #+END_SRC
 
 
-* 4) Session info
+** Prepare the BLAST search table
+
+|-------------------+----------------|
+| Inputs            | Outputs        |
+|-------------------+----------------|
+| probe_cands.fasta | probe_hits.csv |
+| Allele-dna.fa     |                |
+|-------------------+----------------|
+
+ #+BEGIN_SRC sh 
+ nsearch search --query=probe_cands.fasta --db=Allele-dna.fa --out=probe_hits.csv --min-identity=0.8 --strand=both --max-hits=1558
+ #+END_SRC
+
+
+** Then parse the resulting output file "probe_hits.csv" using a memory-efficient Python script
+
+|----------------+------------------|
+| Inputs         | Outputs          |
+|----------------+------------------|
+| probe_hits.csv | probe_counts.csv |
+|----------------+------------------|
+
+ #+BEGIN_SRC python
+ import sys
+ from collections import defaultdict
+
+ acc = defaultdict(int)
+ with open('probe_hits.csv') as fh:
+     next(fh)
+     for ix, ln in enumerate(fh):
+         broken = ln.split(",")
+         fst = broken[0].replace("WP_", "WP").split("_")[0]
+         fst = fst.replace("WP", "WP_")
+         snd = broken[1].replace("WP_", "WP").split(" ")[0]
+         snd = snd.replace("WP", "WP_")
+         qlength = int(broken[3]) - int(broken[2])
+         tlength = int(broken[5]) - int(broken[4])
+         to_acc = ",".join(sorted([fst, snd]))
+         if ((qlength == tlength) and (qlength == 39) and (fst != snd)):
+             acc[to_acc] += 1
+         if (ix % 100000 == 0):
+             print(ix)
+
+ with open('probe_counts.csv', 'w') as fh:
+     for key, val in acc.items():
+         fh.write(key + "\n")
+ #+END_SRC
+
+
+** Prepare the gdf file from probe_counts.csv
+
+|------------------+--------------|
+| Inputs           | Outputs      |
+|------------------+--------------|
+| probe_counts.csv | clusters.gdf |
+|------------------+--------------|
+
+ #+BEGIN_SRC R :session
+ 
+ con2 <- read_csv("probe_counts.csv", col_names=FALSE) %>%
+     unite(Netw, X1, X2, sep=",") %>%
+     pull(Netw)
+
+ annotation <- read.delim("Allele.tab", sep="\t") %>%
+     separate(allele_name, into=c("type"), sep="-", remove=FALSE) %>%
+     mutate(size = stop - start) %>%
+     select(protein_accession, type, size) %>%
+     with(paste(protein_accession, type, size, sep=","))
+
+ gdf <- c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE",
+          annotation,
+          "edgedef>node1 VARCHAR,node2 VARCHAR",
+          con2)
+         
+ write(gdf, "clusters.gdf")
+
+ #+END_SRC
+
+
+** Prepare also the gdf such that our primer designs are also shown in the network
+
+*** Start by expanding our probe designs (all_probes.xlsx) into non-degenerate versions
+
+|-----------------+----------------|
+| Inputs          | Outputs        |
+|-----------------+----------------|
+| all_probes.xlsx | exp_probes.csv |
+|-----------------+----------------|
+
+ #+BEGIN_SRC R :session
+
+ library(readxl)
+
+ all_probes <-
+     read_excel("all_probes.xlsx", sheet = "probes")
+
+ exp_probes <- 
+     all_probes %>%
+     mutate(Exp = map(Target, expand_seq)) %>%
+     unnest
+
+ write_csv(exp_probes, "exp_probes.csv")
+
+ #+END_SRC
+
+
+*** Then filter out their target ranges using a memory-efficient Python script
+
+|----------------+-------------------------|
+| Inputs         | Outputs                 |
+|----------------+-------------------------|
+| exp_probes.csv | selected_probe_hits.csv |
+| probe_hits.csv |                         |
+|----------------+-------------------------|
+
+ #+BEGIN_SRC python
+ seq_acc = set()
+ with open("exp_probes.csv") as ep:
+     next(ep)
+     for ix, line in enumerate(ep):
+         seq = line.split(",")[4].strip()
+         seq_acc.add(seq)
+
+ probe_acc = []
+ with open("probe_hits.csv") as ph:
+     next(ph)
+     for ix, line in enumerate(ph):
+         seq = line.split(",")[6]
+         if seq in seq_set:
+             probe_acc.append(line)
+         if (ix % 1000 == 0):
+             print(ix)
+        
+ with open("selected_probe_hits.csv", "w") as out:
+     for line in probe_acc:
+         out.write(line)
+ #+END_SRC
+
+
+*** Process the resulting selected probe hits file "selected_probe_hits.csv" into gdf annotation
+
+|-------------------------+--------------|
+| Inputs                  | Outputs      |
+|-------------------------+--------------|
+| selected_probe_hits.csv | clusters.gdf |
+| probe_counts.csv        |              |
+| Allele.tab              |              |
+|-------------------------+--------------|
+
+ #+BEGIN_SRC R :session
+
+ library(tidyverse)
+ library(stringr)
+ library(readxl)
+ 
+ selected_hits <-
+     read_csv("selected_probe_hits.csv", col_names=FALSE)
+
+ exp_probes <-
+     read_csv("exp_probes.csv")
+
+ probe_coverage <-
+     left_join(exp_probes, selected_hits, by=c("Exp" = "X7")) %>%
+     select(Name, X1) %>%
+     filter(complete.cases(.)) %>%
+     unique %>%
+     mutate(X1 = str_replace(X1, "WP_", "WP")) %>%
+     separate(X1, c("Seq"), "_") %>%
+     mutate(Seq = str_replace(Seq, "WP", "WP_")) %>%
+     unique %>%
+     group_by(Seq) %>%
+     summarise(Probes = paste(sort(Name), collapse=";"))
+
+ con2 <- read_csv("probe_counts.csv", col_names=FALSE) %>%
+     unite(Netw, X1, X2, sep=",") %>%
+     pull(Netw)
+
+ annotation <-
+     read.delim("Allele.tab", sep="\t") %>%
+     separate(allele_name, into=c("type"), sep="-", remove=FALSE) %>%
+     mutate(size = stop - start) %>%
+     select(protein_accession, type, size) %>%
+     left_join(probe_coverage, by=c("protein_accession" = "Seq"))
+
+ annotation %>%
+     filter(complete.cases(.),
+            type != "NDM") %>%
+     group_by(Probes) %>%
+     summarise(n=n()) %>%
+     arrange(desc(n)) %>% 
+     data.frame
+    
+ gdf_annotation <- 
+     annotation %>%
+     with(paste(protein_accession, type, size, Probes, sep=","))
+
+ gdf <- c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE,probe VARCHAR",
+          gdf_annotation,
+          "edgedef>node1 VARCHAR,node2 VARCHAR",
+          con2)
+         
+ write(gdf, "clusters.gdf")
+
+ probe_targets <-
+     left_join(selected_hits, exp_probes, c("X7" = "Exp")) %>%
+     separate(X2, c("protein_accession", "Junk"), " ") %>%
+     select(X1, protein_accession, Name) %>%
+     left_join(annotation)
+
+ multiple_targets <- 
+     probe_targets %>%
+     group_by(Probes, type) %>%
+     summarise(n=n()) %>%
+     group_by(Probes) %>%
+     summarise(n=n()) %>%
+     arrange(desc(n)) %>%
+     filter(n > 1, complete.cases(.)) %>%
+     pull(Probes)
+
+ mult_targeting_probes <- 
+     probe_targets %>%
+     filter(Probes %in% multiple_targets) %>%
+     group_by(Probes, type) %>%
+     summarise(n=n()) %>%
+     separate(Probes, c("Fst", "Snd"), ";") %>%
+     select(Fst, Snd)
+ mult_targeting_probes <-
+     c(mult_targeting_probes$Fst, mult_targeting_probes$Snd) %>%
+     unique
+
+ all_probes <-
+     read_excel("all_probes.xlsx", sheet = "probes")
+
+ all_probes %>% mutate(
+                  A = str_count(Target, "A"),
+                  T = str_count(Target, "T"),
+                  G = str_count(Target, "G"),
+                  C = str_count(Target, "C"),
+                  Non_deg = A + T + C + G) %>%
+     filter(Name %in% mult_targeting_probes)
+
+ all_probes %>% mutate(
+                  A = str_count(Target, "A"),
+                  T = str_count(Target, "T"),
+                  G = str_count(Target, "G"),
+                  C = str_count(Target, "C"),
+                  Non_deg = A + T + C + G) %>%
+     ggplot(aes(x=Non_deg)) +
+     geom_density() +
+     geom_vline(aes(xintercept=28)) +
+     geom_vline(aes(xintercept=31)) +
+     geom_vline(aes(xintercept=32))
+ ggsave("degen_density.pdf", last_plot())
+
+ #+END_SRC
+
+
+* 3) Session info
 
 ** Python version 3.6.7 | packaged by conda-forge | (default, Feb 25 2019, 20:30:30)
 
