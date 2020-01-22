@@ -1,6 +1,6 @@
 * 1) Figure 2
 
-** With the sequencing data back, join the paired ends and quality filter using nsearch
+** Join the paired ends and quality filter using nsearch
 
 |-----------------------------------------+---------------|
 | Inputs                                  | Outputs       |
@@ -890,6 +890,378 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
  ggsave("degen_density.pdf", last_plot())
 
  #+END_SRC
+
+ 
+* New stuff
+
+#+BEGIN_SRC R :session
+
+## Generate quality reports
+## ls *.fastq.gz | while read file; do echo $file; fastqc $file ; done
+## multiqc .
+
+## nsearch merge --forward=NG-13024_1_lib236478_5794_7_1.fastq.gz --reverse=NG-13024_1_lib236478_5794_7_2.fastq.gz --out=NG-13024_1.fastq
+## nsearch merge --forward=NG-13024_2_lib236479_5794_7_1.fastq.gz --reverse=NG-13024_2_lib236479_5794_7_2.fastq.gz --out=NG-13024_2.fastq
+## nsearch merge --forward=NG-13024_3_lib236480_5794_7_1.fastq.gz --reverse=NG-13024_3_lib236480_5794_7_2.fastq.gz --out=NG-13024_3.fastq
+## nsearch merge --forward=NG-13024_4_lib237853_5794_7_1.fastq.gz --reverse=NG-13024_4_lib237853_5794_7_2.fastq.gz --out=NG-13024_4.fastq
+## nsearch merge --forward=NG-13024_5_lib237854_5794_7_1.fastq.gz --reverse=NG-13024_5_lib237854_5794_7_2.fastq.gz --out=NG-13024_5.fastq
+## nsearch merge --forward=NG-13024_6_lib237855_5794_7_1.fastq.gz --reverse=NG-13024_6_lib237855_5794_7_2.fastq.gz --out=NG-13024_6.fastq
+
+## ls *.fastq | grep -v lib | while read file; do nsearch filter --in $file --out filt_$file; done
+
+## Read counts and other tabular data are provided by Python script filt_reads.py
+
+library(tidyverse)
+library(iNEXT)
+
+mbcc <-
+    read_csv("mol_bc_counts.csv") %>%
+    separate(Sample_type, c("Sample", "Sample_replicate"), sep = "_") %>% 
+    separate(Molecule_type, c("Stuffer", "Molecule_target", "Molecule_replicate"), sep = "_") %>% 
+    filter(!(Molecule_target %in% c(9, 12)))
+
+mol_counts <- 
+    mbcc %>%
+    count(Sample, Sample_replicate, Molecule_target, Molecule_replicate, name = "Count") %>% 
+    mutate(Molecule_target = factor(Molecule_target, levels = as.character(c(0:10, 12:15))),
+           Sample = factor(Sample, levels = as.character(c(1:11, 13:20))))
+
+detection_limits <-
+    mol_counts %>% 
+    filter(Sample %in% c(3, 19, 20)) %>% 
+    group_by(Molecule_target, Molecule_replicate) %>% 
+    summarise(Mean = mean(Count),
+              Sd = sd(Count)) %>% 
+    mutate(Detlim = Mean + 3 * Sd)
+
+##########################################
+## False positive / negative estimation ##
+##########################################
+
+mol_counts %>% 
+    filter(Sample %in% 3:8) %>% 
+    ggplot(aes(x = Molecule_target, y = Count, color = Molecule_replicate)) +
+    geom_boxplot() +
+    facet_grid(Sample~.) +
+    theme_bw() +
+    theme(legend.position = "none")
+
+mol_counts %>% 
+    filter(Sample %in% 9:11) %>% 
+    ggplot(aes(x = Molecule_target, y = Count, color = Molecule_replicate)) +
+    geom_boxplot() +
+    facet_grid(Sample~.) +
+    theme_bw() +
+    theme(legend.position = "none")
+
+mol_counts %>% 
+    filter(Sample %in% 13:20) %>% 
+    ggplot(aes(x = Molecule_target, y = Count, color = Molecule_replicate)) +
+    geom_boxplot() +
+    facet_grid(Sample~.) +
+    theme_bw() +
+    theme(legend.position = "none")
+
+
+concs <- 
+    read_csv2("conc_gradient.csv",
+              col_types = cols(
+                  Sample = col_character(),
+                  Molecule_target = col_character(),
+                  Molecule_replicate = col_character()))
+
+########################
+## Sampling estimates ##
+########################
+
+barcode_estimates <- 
+    mbcc %>% 
+    filter(Sample %in% 9:11) %>% 
+    group_by(Sample,
+             Molecule_target,
+             Molecule_replicate,
+             Sample_replicate) %>% 
+    nest %>% 
+    mutate(
+        Estimate = map(data,
+                     ~ iNEXT(.$Count, q = 0, datatype = "abundance") %>%
+                       .$AsyEst %>%
+                       as_tibble(rownames = "Measure") %>%
+                       filter(Measure == "Species Richness"))) %>%
+    unnest(Estimate) %>%
+    select(-data) %>% 
+    left_join(
+        read_csv2("conc_gradient.csv",
+                  col_types = cols(
+                      Sample = col_character(),
+                      Molecule_target = col_character(),
+                      Molecule_replicate = col_character())),
+        by = c("Sample",
+             "Molecule_target",
+             "Molecule_replicate")) %>% 
+    unite(Tar_Rep, Molecule_target, Molecule_replicate,
+          sep = "_", remove = FALSE)
+
+
+detection_limits %>% 
+    unite(TR, Molecule_target, Molecule_replicate, sep = "_") %>% 
+    select(-Sd) %>% 
+    pivot_longer(cols = c("Mean", "Detlim"),
+                 names_to = "Parameter",
+                 values_to = "Value") %>% 
+    ggplot(aes(x = TR, y = Value, color = Parameter)) +
+    geom_point()
+
+
+##Estimated
+barcode_estimates %>% 
+    filter(!(Tar_Rep %in% c("4_1", "3_1", "0_1", "6_2", "8_1"))) %>% 
+    ggplot(aes(x = Molecule_concentration, y = Estimator, color = Tar_Rep)) +
+    geom_point() +
+    geom_smooth(method='lm', se=FALSE) +
+    geom_hline(yintercept = range(37.16)) +
+    geom_hline(yintercept = range(60.75), linetype="dashed") +
+    geom_hline(yintercept = range(107.93), linetype="dotted") +
+    scale_x_log10() +
+    scale_y_log10() +
+    theme_bw()
+
+##Observed
+barcode_estimates %>% 
+    filter(!(Tar_Rep %in% c("4_1", "3_1", "0_1", "6_2", "8_1"))) %>% 
+    ggplot(aes(x = Molecule_concentration, y = Observed, color = Tar_Rep)) +
+    geom_point() +
+    geom_smooth(method='lm', se=FALSE) +
+    geom_hline(yintercept = range(37.16)) +
+    geom_hline(yintercept = range(60.75), linetype="dashed") +
+    geom_hline(yintercept = range(107.93), linetype="dotted") +
+    scale_x_log10() +
+    scale_y_log10() +
+    theme_bw()
+
+
+## linear_equations <- 
+##     barcode_estimates %>% 
+##     filter(!(Tar_Rep %in% c("4_1", "3_1", "0_1", "6_2", "8_1"))) %>% 
+##     group_by(Tar_Rep) %>% 
+##     select(Molecule_concentration, Estimator, Observed) %>% 
+##     nest %>% 
+##     mutate(Coefficient = map(data,
+##                              ~ lm(Molecule_concentration ~ Observed, data = .) %>%
+##                                .$coefficients)) %>% 
+##     select(-data) %>% 
+##     unnest(Coefficient) %>% 
+##     mutate(Parameter = c("Intercept", "Slope")) %>% 
+##     pivot_wider(
+##         id_cols = "Tar_Rep",
+##         names_from = "Parameter",
+##         values_from = "Coefficient")
+
+
+## linear_equations <- 
+##     barcode_estimates %>% 
+##     filter(!(Tar_Rep %in% c("4_1", "3_1", "0_1", "6_2", "8_1"))) %>% 
+##     group_by(Tar_Rep) %>% 
+##     select(Molecule_concentration, Estimator, Observed) %>% 
+##     nest %>% 
+##     mutate(
+##         Estimated_Coefficients = map(data,
+##                              ~ lm(Estimator ~ Molecule_concentration, data = .) %>%
+##                                  .$coefficients),
+##         Observed_Coefficients = map(data,
+##                              ~ lm(Observed ~ Molecule_concentration, data = .) %>%
+##                                  .$coefficients)) %>% 
+##     select(-data) %>% 
+##     unnest(c(Estimated_Coefficients, Observed_Coefficients)) %>% 
+##     mutate(Parameter = c("Intercept", "Slope")) %>% 
+##     pivot_wider(
+##         id_cols = "Tar_Rep",
+##         names_from = "Parameter",
+##         values_from = c("Estimated_Coefficients", "Observed_Coefficients"))
+
+
+## linear_equations <- 
+##     barcode_estimates %>% 
+##     filter(!(Tar_Rep %in% c("4_1", "3_1", "0_1", "6_2", "8_1"))) %>% 
+##     group_by(Tar_Rep) %>% 
+##     select(Molecule_concentration, Estimator, Observed) %>% 
+##     nest %>% 
+##     mutate(Coefficient = map(data,
+##                              ~ lm(Estimator ~ Molecule_concentration, data = .) %>%
+##                                .$coefficients)) %>% 
+##     select(-data) %>% 
+##     unnest(Coefficient) %>% 
+##     mutate(Parameter = c("Intercept", "Slope")) %>% 
+##     pivot_wider(
+##         id_cols = "Tar_Rep",
+##         names_from = "Parameter",
+##         values_from = "Coefficient")
+
+
+m - slope
+y0 - intercept
+
+y = mx + y0
+
+x -> spike_in
+y -> observed
+
+x = (y - y0) / m
+x = (y - intercept) / slope
+
+
+## concs_tbl <- 
+##     read_csv2("conc_gradient.csv",
+##               col_types = cols(
+##                   Sample = col_character(),
+##                   Molecule_target = col_character(),
+##                   Molecule_replicate = col_character())) %>% 
+##     unite(Tar_Rep, Molecule_target, Molecule_replicate,
+##           sep = "_")
+
+
+linear_equations <- 
+    barcode_estimates %>% 
+    filter(!(Tar_Rep %in% c("4_1", "3_1", "0_1", "6_2", "8_1"))) %>% 
+    group_by(Tar_Rep) %>% 
+    select(Molecule_concentration, Estimator, Observed) %>% 
+    nest %>% 
+    mutate(
+        Estimated_Coefficients = map(data,
+                             ~ lm(Estimator ~ Molecule_concentration, data = .) %>%
+                                 .$coefficients),
+        Observed_Coefficients = map(data,
+                             ~ lm(Observed ~ Molecule_concentration, data = .) %>%
+                                 .$coefficients)) %>% 
+    select(-data) %>% 
+    unnest(c(Estimated_Coefficients, Observed_Coefficients)) %>% 
+    mutate(Parameter = c("Intercept", "Slope")) %>% 
+    pivot_wider(
+        id_cols = "Tar_Rep",
+        names_from = "Parameter",
+        values_from = c("Estimated_Coefficients", "Observed_Coefficients"))
+
+
+
+background_estimates <-
+    mbcc %>% 
+    filter(Sample %in% c(3, 19, 20)) %>% 
+    group_by(Sample,
+             Molecule_target,
+             Molecule_replicate,
+             Sample_replicate) %>% 
+    nest %>% 
+    mutate(
+        Estimate = map(data,
+                       ~ iNEXT(.$Count, q = 0, datatype = "abundance") %>%
+                           .$AsyEst %>%
+                         as_tibble(rownames = "Measure") %>%
+                         filter(Measure == "Species Richness"))) %>%
+    unnest(Estimate) %>%
+    select(-data) %>% 
+    ungroup %>% 
+    group_by(Molecule_target, Molecule_replicate) %>% 
+    summarise(Obs_Mean = mean(Observed),
+              Obs_Sd = sd(Observed),
+              Est_Mean = mean(Estimator),
+              Est_Sd = sd(Estimator)) %>% 
+    mutate(Obs_Detlim = Obs_Mean + 3 * Obs_Sd,
+           Est_Detlim = Est_Mean + 3 * Est_Sd)
+
+
+lods <- 
+    background_estimates %>% 
+    unite(Tar_Rep, Molecule_target, Molecule_replicate,
+          sep = "_") %>% 
+    left_join(linear_equations) %>% 
+    mutate(Estimated_LoD = (Est_Detlim - Estimated_Coefficients_Intercept) / Estimated_Coefficients_Slope,
+           Observed_LoD = (Obs_Detlim - Observed_Coefficients_Intercept) / Observed_Coefficients_Slope) %>% 
+    filter(complete.cases(.))
+
+
+pdf("lods_obs_long.pdf", useDingbats = FALSE)
+ggplot(data = lods) +
+    scale_x_continuous(limits=c(0, 1.5e8)) + 
+    scale_y_continuous(limits=c(0, 2500)) + 
+    geom_abline(aes(slope = Observed_Coefficients_Slope,
+                                 intercept = Observed_Coefficients_Intercept,
+                    color = Tar_Rep)) +
+    geom_point(aes(x = Observed_LoD, y = Obs_Detlim, color = Tar_Rep)) +
+    theme_bw() +
+    guides(color=FALSE)
+dev.off()
+
+
+pdf("lods_obs_short.pdf", useDingbats = FALSE)
+ggplot(data = lods) +
+    scale_x_continuous(limits=c(0, 5e7)) + 
+    scale_y_continuous(limits=c(0, 1000)) + 
+    geom_abline(aes(slope = Observed_Coefficients_Slope,
+                                 intercept = Observed_Coefficients_Intercept,
+                    color = Tar_Rep)) +
+    geom_point(aes(x = Observed_LoD, y = Obs_Detlim, color = Tar_Rep)) +
+    theme_bw() +
+    guides(color=FALSE)
+dev.off()
+
+    
+    
+## pdf("lods.pdf", useDingbats = FALSE)
+## ggplot(data = lods) +
+##     scale_x_continuous(limits=c(0, 2e8)) + 
+##     scale_y_continuous(limits=c(0, 6500)) + 
+##     geom_abline(aes(slope = Estimated_Coefficients_Slope,
+##                                  intercept = Estimated_Coefficients_Intercept,
+##                     color = Tar_Rep)) +
+##     geom_point(aes(x = Estimated_LoD, y = Est_Detlim, color = Tar_Rep)) +
+##     theme_bw() +
+##     guides(color=FALSE)
+## dev.off()
+
+
+## pdf("lods_annot.pdf", useDingbats = FALSE)
+## ggplot(data = lods) +
+##     scale_x_continuous(limits=c(-(1e8), 1e8)) + 
+##     scale_y_continuous(limits=c(0, 6500)) + 
+##     geom_abline(aes(slope = Estimated_Coefficients_Slope,
+##                                  intercept = Estimated_Coefficients_Intercept,
+##                     color = Tar_Rep)) +
+##     geom_point(aes(x = Estimated_LoD, y = Est_Detlim, color = Tar_Rep)) +
+##     theme_bw()
+## dev.off()
+
+xxx
+
+## lods <- 
+##     detection_limits %>% 
+##     unite(Tar_Rep, Molecule_target, Molecule_replicate,
+##           sep = "_") %>% 
+##     left_join(linear_equations) %>% 
+##     mutate(Estimated_LoD = (Detlim - Estimated_Coefficients_Intercept) / Estimated_Coefficients_Slope,
+##            Observed_LoD = (Detlim - Observed_Coefficients_Intercept) / Observed_Coefficients_Slope) %>% 
+##     arrange(desc(Observed_LoD)) %>%
+##     select(Tar_Rep, Detlim, Estimated_LoD, Observed_LoD) %>%
+##     filter(complete.cases(.))
+
+
+
+
+
+barcode_estimates %>% 
+    filter(!(Tar_Rep %in% c("4_1", "3_1", "0_1", "6_2", "8_1"))) %>% 
+    ggplot(aes(x = Molecule_concentration, y = Estimator, color = Tar_Rep)) +
+    geom_smooth(method='lm', se=FALSE) +
+    geom_point(data = lods, aes(x = Observed_LoD, y = Est_Detlim, color = Tar_Rep)) + 
+    scale_x_log10() +
+    scale_y_log10() +
+    theme_bw()
+
+geom_abline(data=df,aes(slope=slope,intercept=intercept,color=factor(wf)))
+
+
+XXX
+
+#+END_SRC
 
 
 * 3) Session info
