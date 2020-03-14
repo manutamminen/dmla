@@ -1,3 +1,18 @@
+
+* Code and data for the Digital Multiplex Ligation Assay (dMLA) method validation
+
+** Data files
+
+ | File                    | Content                                  |
+ |-------------------------+------------------------------------------|
+ | Allele-dna.fa           | Reference sequences                      |
+ | Allele.tab              | Sequence annotation                      |
+ | all_probes.xlsx         | Probe, template and primer sequences     |
+ | expanded_libraries.xlsx | Annotation for Figures 3 and S01         |
+ | libraries.xlsx          | Annotation for Figures 3 and S01         |
+ | mol_bc_counts.tar.gz    | Molecular counts from the sequence files |
+ | probes.xlsx             | Probe, template and primer sequences     |
+
 * 1) Figure 2
 
 ** Sequencing stats
