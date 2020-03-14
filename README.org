@@ -7,7 +7,6 @@
  | Allele-dna.fa           | Reference sequences                      |
  | Allele.tab              | Sequence annotation                      |
  | all_probes.xlsx         | Probe, template and primer sequences     |
- | expanded_libraries.xlsx | Annotation for Figures 3 and S01         |
  | libraries.xlsx          | Annotation for Figures 3 and S01         |
  | mol_bc_counts.tar.gz    | Molecular counts from the sequence files |
  | probes.xlsx             | Probe, template and primer sequences     |
@@ -321,46 +320,29 @@ R
 
 ** Sequencing stats
 
-In /Users/mavatam/Dropbox/Scratch/MLA/2nd
+*** Raw sequences
 
-*** Raw
+Bash
 
 #+BEGIN_SRC sh
 ls *.gz | while read file; do echo $file; gzcat $file | wc -l | awk '{print $1 / 4}'; done
 #+END_SRC
 
-NG-17872_10_lib297291_6185_1_1.fastq.gz 6802543
-NG-17872_10_lib297291_6185_1_2.fastq.gz 6802543
-NG-17872_11_lib297292_6178_3_1.fastq.gz 3873555
-NG-17872_11_lib297292_6178_3_2.fastq.gz 3873555
-NG-17872_11_lib297292_6189_3_1.fastq.gz 5111334
-NG-17872_11_lib297292_6189_3_2.fastq.gz 5111334
-
-Or
-
-lib10 6802543
-lib11_1 3873555
-lib11_2 5111334
-
 *** After read merging
+
+Bash
 
 #+BEGIN_SRC sh
 ls *.fastq | while read file; do echo $file; wc -l $file | awk '{print $1 / 4}'; done
 #+END_SRC
 
-lib10.fastq 6731594
-lib11_1.fastq 3677900
-lib11_2.fastq 4837779
-
 *** After quality filtering
+
+Bash
 
 #+BEGIN_SRC sh
 ls lib*.fasta | while read file; do echo $file; grep -c ">" $file; done
 #+END_SRC
-
-lib10.fasta 6696375
-lib11_1.fasta 3648867
-lib11_2.fasta 4802951
 
 *** Put together
 
@@ -387,6 +369,8 @@ lib11_2.fasta 4802951
 | NG-17872_11_lib297292_6189_3_1.fastq.gz |               |
 |-----------------------------------------+---------------|
 
+Bash
+
  #+BEGIN_SRC sh
  nsearch merge --forward NG-17872_10_lib297291_6185_1_1.fastq.gz --reverse NG-17872_10_lib297291_6185_1_2.fastq.gz --out lib10.fastq
  nsearch merge --forward NG-17872_11_lib297292_6178_3_1.fastq.gz --reverse NG-17872_11_lib297292_6178_3_2.fastq.gz --out lib11_1.fastq
@@ -409,51 +393,7 @@ lib11_2.fasta 4802951
 | probes.xlsx   |             |
 |---------------+-------------|
 
-
-TMP
-
-#+BEGIN_SRC ipython :session
-
-import epride as ep
-import pandas as pd
-import glob
-from collections import defaultdict
-
-fasta_files = glob.glob("lib*.fasta")
-
-fname = "lib10.fasta"
-
-def get_lengths(fname):
-    out_name = fname.split(".")[0] + "_lengths.csv"
-    len_acc = defaultdict(int)
-    for _, seq in ep.read_fasta(fname):
-        len_acc[len(seq)] += 1
-    out_tbl = pd.DataFrame([[i, j] for i, j in len_acc.items()], columns=['Length', 'Count'])
-    out_tbl['File'] = fname
-    out_tbl.to_csv(out_name, index=False)
-
-for fname in fasta_files:
-    get_lengths(fname)
-
-#+END_SRC
-
-
-TMP
-
-#+BEGIN_SRC R :session
-
-library(tidyverse)
-library(fs)
-
-dir_ls(path = '../MLA/2nd/', glob='*lengths.csv') %>% 
-    tibble(fname = .) %>% 
-    mutate(data = map(fname, read_csv)) %>% 
-    unnest(data) %>% 
-    select(-fname) %>% 
-    ggplot(aes(x = Length, y = Count, color = File)) +
-    geom_density(stat = "identity")
-
-#+END_SRC
+Python
 
  #+BEGIN_SRC python
  import os
@@ -546,6 +486,8 @@ dir_ls(path = '../MLA/2nd/', glob='*lengths.csv') %>%
 | libraries.xlsx | expanded_libraries.xlsx |
 |----------------+-------------------------|
 
+Python
+
 #+BEGIN_SRC ipython :session
 import os
 import epride as ep
@@ -596,20 +538,23 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
 
 ** Prepare visualizations of the lib10 and lib11 count tables
 
-|-------------------------+------------------|
-| Inputs                  | Outputs          |
-|-------------------------+------------------|
-| expanded_libraries.xlsx | lib_complete.pdf |
-| lib10.csv               |                  |
-| lib11_1.csv             |                  |
-| lib11_2.csv             |                  |
-|-------------------------+------------------|
+|-------------------------------+-------------|
+| Inputs                        | Outputs     |
+|-------------------------------+-------------|
+| expanded_libraries.xlsx       | Fig_3.pdf   |
+| lib10.csv                     | Fig_S01.pdf |
+| lib11_1.csv                   |             |
+| lib11_2.csv                   |             |
+| Table_Gates_ProbeTargets.xlsx |             |
+| cluster_confirmation.xlsx     |             |
+| sample_conversion.xlsx        |             |
+|-------------------------------+-------------|
+
+R
 
  #+BEGIN_SRC R :session
  library(tidyverse)
  library(readxl)
-
- ## Prepare count table for tube 10
 
  lib10_counts <-
      read_csv("lib10.csv") %>%
@@ -622,8 +567,6 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
      gather(Cluster, Count, -Sample_ix) %>%
      mutate(Tube = 10) %>%
      select(Tube, Sample_ix, Cluster, Count)
-
- ## Prepare count table for tube 11
 
  lib11_counts <-
      rbind(
@@ -639,17 +582,12 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
      mutate(Tube = 11) %>%
      select(Tube, Sample_ix, Cluster, Count)
 
- ## Merge the count tables
-
  lib_counts <-
      rbind(lib10_counts, lib11_counts) %>%
      spread(Cluster, Count, fill=0) %>%
      gather(Cluster, Count, -Tube, -Sample_ix)  %>%
      spread(Sample_ix, Count, fill=0) %>%
      gather(Sample_ix, Count, -Tube, -Cluster)
- 
-
- ## Prepare a logical mask of the sample design
 
  design <-
      read_excel("expanded_libraries.xlsx") %>%
@@ -662,29 +600,12 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
      mutate(Mask = Count > 0) %>%
      select(-Count)
 
- ## Merge the logical mask with the count tables
-
  full_lib <-
      left_join(lib_counts,
                design,
                by=c("Tube", "Sample_ix", "Cluster")) %>%
      mutate_if(is.logical, replace_na, FALSE) %>%
      mutate(Cluster = as.factor(Cluster))
-
- ## Plot as a heatmap and reverse the false positives for visual identification
-
- full_lib %>% 
-     mutate(Count = ifelse(Mask, Count, -Count),
-            Tube = as.factor(Tube)) %>%
-     ggplot(aes(x=Cluster, y=Sample_ix)) +
-     geom_tile(aes(fill=Count), color="gray") +
-     facet_grid(Tube~.) +
-     scale_fill_gradient2(low = "blue", high = "red", mid="white") +
-     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-           axis.text.y = element_text(size=5))
- ggsave("lib_complete.pdf", last_plot())
- 
- ## Summarise the clusters per sample per tube
 
  cluster_summary <-
      filter(full_lib, Count > 500) %>%
@@ -694,7 +615,6 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
      summarise(Clusters = paste(unique(Cluster_no), collapse=","))
  write_delim(cluster_summary, "cluster_summary.csv", delim=";")
 
-
  t10_dl <- 
      filter(full_lib, Tube == 10,
             Sample_ix %in% c(511, 512, 513)) %>%
@@ -703,43 +623,6 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
                sd_cnt = sd(Count, na.rm = TRUE),
                ld = mean_cnt + 3*sd_cnt)
 
- full_lib %>% 
-     filter(Tube == 10) %>% 
-     filter(!(Sample_ix %in% c(511, 512, 513))) %>%
-     left_join(t10_dl, by="Cluster") %>%
-     ungroup %>% 
-     mutate(Signal = ifelse(Count > ld, 1, 0),
-            Sample_ix = as.factor(Sample_ix),
-            Signal = ifelse(Mask, Signal, -Signal)) %>% 
-     ggplot(aes(x=Cluster, y=Sample_ix)) +
-     geom_tile(aes(fill=Signal)) +
-     scale_fill_gradient2(low = "blue", mid = "white", high = "red") +
-     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-           axis.text.y = element_text(size=7))
-
- ggsave("interm1.pdf", last_plot())
-
- full_lib %>% 
-     filter(Tube == 10) %>% 
-     filter(!(Sample_ix %in% c(511, 512, 513))) %>%
-     left_join(t10_dl, by="Cluster") %>%
-     ungroup %>% 
-     mutate(Signal = ifelse(Count > ld, 1, 0),
-            Sample_ix = as.factor(Sample_ix)) %>% 
-     separate(Cluster, c("Clust", "Repl"), by="_") %>%
-     group_by(Sample_ix, Clust) %>%
-     mutate(Signal = ifelse(sum(Signal) == 2, 1, 0),
-            Signal = ifelse(Mask, Signal, -Signal)) %>% 
-     ggplot(aes(x=Clust, y=Sample_ix)) +
-     geom_tile(aes(fill=Signal)) +
-     scale_fill_gradient2(low = "blue", mid = "white", high = "red") +
-     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-           axis.text.y = element_text(size=7))
-
- ggsave("final1.pdf", last_plot())
-
-
-
  clust_conv <- 
      read_xlsx("Table_Gates_ProbeTargets.xlsx") %>%
      select(Cluster, `Enzyme family`) %>%
@@ -747,72 +630,8 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
      rename(Clust = Cluster,
             Family = `Enzyme family`)
 
-
- full_lib %>% 
-     filter(Tube == 10) %>% 
-     filter(!(Sample_ix %in% c(511, 512, 513))) %>%
-     left_join(t10_dl, by="Cluster") %>%
-     ungroup %>% 
-     mutate(Signal = ifelse(Count > ld, 1, 0),
-            Sample_ix = as.numeric(Sample_ix)) %>% 
-     separate(Cluster, c("Clust", "Repl"), by="_") %>%
-     group_by(Sample_ix, Clust) %>%
-     mutate(Signal = ifelse(sum(Signal) == 2, 1, 0),
-            Signal = ifelse(Mask, Signal, -Signal)) %>%
-     ungroup %>%
-     mutate(Clust = as.numeric(Clust)) %>% 
-     left_join(read_xlsx("sample_conversion.xlsx")) %>%
-     left_join(clust_conv) %>% 
-     ggplot(aes(x=Family, y=Sample_ID)) +
-     geom_tile(aes(fill=Signal)) +
-     scale_fill_gradient2(low = "blue", mid = "white", high = "red") +
-     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-           axis.text.y = element_text(size=7))
- ggsave("final1.pdf", last_plot())
-
- full_lib %>% 
-     filter(Tube == 10) %>% 
-     filter(!(Sample_ix %in% c(511, 512, 513))) %>%
-     left_join(t10_dl, by="Cluster") %>%
-     ungroup %>% 
-     mutate(Signal = ifelse(Count > ld, 1, 0),
-            Sample_ix = as.numeric(Sample_ix)) %>% 
-     separate(Cluster, c("Clust", "Repl"), by="_") %>%
-     group_by(Sample_ix, Clust) %>%
-     mutate(Signal = ifelse(sum(Signal) == 2, 1, 0)) %>%
-     ungroup %>%
-     mutate(Clust = as.numeric(Clust)) %>% 
-     left_join(read_xlsx("sample_conversion.xlsx")) %>%
-     left_join(clust_conv) %>%
-     select(-Tube, -Repl, -Count, -Mask, -mean_cnt, -sd_cnt, -ld) %>%
-     filter(Signal == 1) %>%
-     write_csv("double_positives.csv")
-
- full_lib %>% 
-     filter(Tube == 10) %>% 
-     filter(!(Sample_ix %in% c(511, 512, 513))) %>%
-     left_join(t10_dl, by="Cluster") %>%
-     ungroup %>% 
-     mutate(Signal = ifelse(Count > ld, 1, 0),
-            Sample_ix = as.numeric(Sample_ix)) %>% 
-     separate(Cluster, c("Clust", "Repl"), by="_") %>%
-     group_by(Sample_ix, Clust) %>%
-     mutate(Signal = ifelse(sum(Signal) == 2, 1, 0),
-            Signal = ifelse(Mask, Signal, -Signal)) %>% 
-     ungroup %>% 
-     mutate(Clust = as.factor(as.numeric(Clust)),
-            Sample_ix = as.factor(Sample_ix)) %>% 
-     ggplot(aes(x=Clust, y=Sample_ix)) +
-     geom_tile(aes(fill=Signal)) +
-     scale_fill_gradient2(low = "blue", mid = "white", high = "red") +
-     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-           axis.text.y = element_text(size=7))
- ggsave("final2.pdf", last_plot())
-
-
-
  conf_mask <-
-     read_xlsx("cluster_confirmation4.xlsx") %>% 
+     read_xlsx("cluster_confirmation.xlsx") %>% 
      gather(Cf, Conf, -Sample_ix, -False1, -False2, -False3) %>%
      select(-Cf) %>%
      gather(Fl, False_pos, -Sample_ix, -Conf) %>%
@@ -825,7 +644,6 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
      gather(Type, Clust, -Sample_ix, -Category) %>%
      filter(complete.cases(.)) %>%
      select(-Type)
-
 
  signal_tbl <- 
      full_lib %>% 
@@ -852,65 +670,6 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
             Sign = ifelse(Signal == 0, 0, Sign),
             Sign = as.factor(Sign))
 
-
- ggplot(signal_tbl, aes(x=Family, y=Sample_ID)) +
-     geom_tile(aes(fill=Sign)) +
-     scale_fill_manual(values = c("white", "red", "blue", "green", "orange")) +
-     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-           axis.text.y = element_text(size=7))
- ggsave("final5.pdf", last_plot())
- 
- ggplot(signal_tbl, aes(x=Family, y=Sample_ID)) +
-     geom_tile(aes(fill=Sign)) +
-     scale_fill_manual(values = c("white", "red", "blue", "green", "orange")) +
-     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-           axis.text.y = element_text(size=7))
-
- ggsave("final4.pdf", last_plot())
-
- signal_tbl %>%
-     mutate(Clust = as.factor(Clust),
-            Sample_ix = as.factor(Sample_ix)) %>% 
-     ggplot(aes(x=Clust, y=Sample_ix)) +
-     geom_tile(aes(fill=Sign)) +
-     scale_fill_manual(values = c("white", "red", "blue", "green", "orange")) +
-     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-           axis.text.y = element_text(size=7))
-
- ggsave("overlaid.pdf", last_plot())
-
- signal_tbl %>%
-     mutate(Clust = as.factor(Clust),
-            Sample_ix = as.factor(Sample_ix),
-            Signal = as.factor(Signal)) %>% 
-     ggplot(aes(x=Clust, y=Sample_ix)) +
-     geom_tile(aes(fill=Signal)) +
-     scale_fill_manual(values = c("blue", "white", "red")) +
-     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-           axis.text.y = element_text(size=7))
- ggsave("non_overlaid.pdf", last_plot())
-
- full_lib %>% 
-     mutate(Count = ifelse(Mask, Count, -Count),
-            Tube = as.factor(Tube)) %>% 
-     filter(Tube == 10) %>% 
-     separate(Cluster, c("Clust", "Repl"), by="_") %>% 
-     mutate(Sample_ix = as.numeric(Sample_ix),
-            Clust = as.numeric(Clust),
-            Count = abs(Count)) %>%
-     left_join(read_xlsx("sample_conversion.xlsx")) %>%
-     left_join(clust_conv) %>% 
-     filter(Repl != 3,
-            Family != "KPC") %>% 
-     unite(Fam_rep, Family, Repl, sep=" replicate") %>% 
-     ggplot(aes(x=Fam_rep, y=Sample_ID)) +
-     geom_tile(aes(fill=Count), color="gray") +
-     scale_fill_gradient2(low = "blue", high = "red", mid="white") +
-     theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-           axis.text.y = element_text(size=5))
- ggsave("raw.pdf", last_plot())
-
- 
  lib1 <- 
      full_lib %>% 
      mutate(Count = ifelse(Mask, Count, -Count),
@@ -952,8 +711,6 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
             Sign = ifelse(Signal == 0, 0, Sign),
             Sign = as.factor(Sign))
 
-
-
  left_join(lib1, signal_tbl2) %>% 
      unite(Fam_rep, Family, Repl, sep=" replicate") %>% 
      mutate(Signal = abs(Signal)) %>% 
@@ -968,9 +725,7 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
            panel.grid.minor = element_blank(),
            panel.border = element_blank(),
            panel.background = element_blank())
-
- ggsave("Fig_bar.pdf", last_plot())
- 
+ ggsave("Fig_s01.pdf", last_plot())
 
  left_join(lib1, lib2) %>% 
      unite(Fam_rep, Family, Repl, sep=" replicate") %>% 
@@ -979,422 +734,9 @@ exp_libraries.to_excel("expanded_libraries.xlsx", index=False)
      scale_fill_gradient2(low = "blue", high = "red", mid="white") +
      theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
            axis.text.y = element_text(size=5))
- ggsave("raw_joined.pdf", last_plot())
-
- 
- left_join(lib1, lib2) %>% 
-     unite(Fam_rep, Family, Repl, sep=" replicate") %>%
-     filter(complete.cases(.),
-            Sign != 0) %>%
-     pull(Sample_ID)
-
- left_join(lib1, lib2) %>% 
-     unite(Fam_rep, Family, Repl, sep=" replicate") %>%
-     pull(Sample_ID) %>%
-     unique %>%
-     length
- 
-
+ ggsave("Fig_3.pdf", last_plot())
  #+END_SRC
 
-
-* New stuff
-
-#+BEGIN_SRC R :session
-
-## Generate quality reports
-## ls *.fastq.gz | while read file; do echo $file; fastqc $file ; done
-## multiqc .
-
-## nsearch merge --forward=NG-13024_1_lib236478_5794_7_1.fastq.gz --reverse=NG-13024_1_lib236478_5794_7_2.fastq.gz --out=NG-13024_1.fastq
-## nsearch merge --forward=NG-13024_2_lib236479_5794_7_1.fastq.gz --reverse=NG-13024_2_lib236479_5794_7_2.fastq.gz --out=NG-13024_2.fastq
-## nsearch merge --forward=NG-13024_3_lib236480_5794_7_1.fastq.gz --reverse=NG-13024_3_lib236480_5794_7_2.fastq.gz --out=NG-13024_3.fastq
-## nsearch merge --forward=NG-13024_4_lib237853_5794_7_1.fastq.gz --reverse=NG-13024_4_lib237853_5794_7_2.fastq.gz --out=NG-13024_4.fastq
-## nsearch merge --forward=NG-13024_5_lib237854_5794_7_1.fastq.gz --reverse=NG-13024_5_lib237854_5794_7_2.fastq.gz --out=NG-13024_5.fastq
-## nsearch merge --forward=NG-13024_6_lib237855_5794_7_1.fastq.gz --reverse=NG-13024_6_lib237855_5794_7_2.fastq.gz --out=NG-13024_6.fastq
-
-## ls *.fastq | grep -v lib | while read file; do nsearch filter --in $file --out filt_$file; done
-
-## Read counts and other tabular data are provided by Python script filt_reads.py
-
-library(tidyverse)
-library(iNEXT)
-
-mbcc <-
-    read_csv("mol_bc_counts.csv") %>%
-    separate(Sample_type, c("Sample", "Sample_replicate"), sep = "_") %>% 
-    separate(Molecule_type, c("Stuffer", "Molecule_target", "Molecule_replicate"), sep = "_") %>% 
-    filter(!(Molecule_target %in% c(9, 12)))
-
-mol_counts <- 
-    mbcc %>%
-    count(Sample, Sample_replicate, Molecule_target, Molecule_replicate, name = "Count") %>% 
-    mutate(Molecule_target = factor(Molecule_target, levels = as.character(c(0:10, 12:15))),
-           Sample = factor(Sample, levels = as.character(c(1:11, 13:20))))
-
-detection_limits <-
-    mol_counts %>% 
-    filter(Sample %in% c(3, 19, 20)) %>% 
-    group_by(Molecule_target, Molecule_replicate) %>% 
-    summarise(Mean = mean(Count),
-              Sd = sd(Count)) %>% 
-    mutate(Detlim = Mean + 3 * Sd)
-
-concs <- 
-    read_csv2("conc_gradient.csv",
-              col_types = cols(
-                  Sample = col_character(),
-                  Molecule_target = col_character(),
-                  Molecule_replicate = col_character()))
-
-barcode_estimates <- 
-    mbcc %>% 
-    filter(Sample %in% 9:11) %>% 
-    group_by(Sample,
-             Molecule_target,
-             Molecule_replicate,
-             Sample_replicate) %>% 
-    nest %>% 
-    mutate(
-        Estimate = map(data,
-                     ~ iNEXT(.$Count, q = 0, datatype = "abundance") %>%
-                       .$AsyEst %>%
-                       as_tibble(rownames = "Measure") %>%
-                       filter(Measure == "Species Richness"))) %>%
-    unnest(Estimate) %>%
-    select(-data) %>% 
-    left_join(
-        read_csv2("conc_gradient.csv",
-                  col_types = cols(
-                      Sample = col_character(),
-                      Molecule_target = col_character(),
-                      Molecule_replicate = col_character())),
-        by = c("Sample",
-             "Molecule_target",
-             "Molecule_replicate")) %>% 
-    unite(Tar_Rep, Molecule_target, Molecule_replicate,
-          sep = "_", remove = FALSE)
-
-equation_tbl <- 
-    barcode_estimates %>% 
-    filter(!(Tar_Rep %in% c("4_1", "3_1", "0_1", "6_2", "8_1"))) %>% 
-    group_by(Tar_Rep) %>% 
-    select(Molecule_concentration, Estimator, Observed) %>% 
-    nest %>% 
-    mutate(
-        Model = map(data, ~ lm(Observed ~ Molecule_concentration, data = .)),
-        Coefs = map(Model, coefficients),
-        R2 = map_dbl(Model, ~ summary(.) %>% .$r.squared),
-        pval = map_dbl(Model, ~ summary(.) %>% .$coefficient %>% .[2, 4])) %>% 
-    select(-data, -Model) %>% 
-    unnest(c(Coefs)) %>% 
-    mutate(Parameter = c("Intercept", "Slope")) %>% 
-    pivot_wider(
-        id_cols = c("Tar_Rep", "R2", "pval"),
-        names_from = "Parameter",
-        values_from = "Coefs")
-
-background_estimates <-
-    mbcc %>% 
-    filter(Sample %in% c(3, 19, 20)) %>% 
-    group_by(Sample,
-             Molecule_target,
-             Molecule_replicate,
-             Sample_replicate) %>% 
-    nest %>% 
-    mutate(
-        Estimate = map(data,
-                       ~ iNEXT(.$Count, q = 0, datatype = "abundance") %>%
-                           .$AsyEst %>%
-                         as_tibble(rownames = "Measure") %>%
-                         filter(Measure == "Species Richness"))) %>%
-    unnest(Estimate) %>%
-    select(-data) %>% 
-    ungroup %>% 
-    group_by(Molecule_target, Molecule_replicate) %>% 
-    summarise(Obs_Mean = mean(Observed),
-              Obs_Sd = sd(Observed),
-              Est_Mean = mean(Estimator),
-              Est_Sd = sd(Estimator)) %>% 
-    mutate(Obs_Detlim = Obs_Mean + 3 * Obs_Sd,
-           Est_Detlim = Est_Mean + 3 * Est_Sd)
-
-clust_conv <- 
-    read_xlsx("Table_Gates_ProbeTargets.xlsx") %>%
-    select(Cluster, `Enzyme family`) %>%
-    filter(complete.cases(.)) %>%
-    rename(Clust = Cluster,
-           Family = `Enzyme family`) %>% 
-    mutate(Clust = as.character(Clust))
-
-
-background_estimates %>% 
-    unite(Tar_Rep, Molecule_target, Molecule_replicate,
-          sep = "_") %>% 
-    left_join(equation_tbl) %>% 
-    mutate(`Detection limit (molecules)` = (Obs_Detlim - Intercept) / Slope,
-           `Detection limit (attomolar)` = `Detection limit (molecules)` / 6.022e23 / 1e-18) %>% 
-    filter(complete.cases(.)) %>% 
-    mutate_if(is.numeric, ~ round(., 3)) %>% 
-    mutate(pval = ifelse(pval == 0, "< 0.001", pval)) %>% 
-    separate(Tar_Rep, c("Clust", "Probe pair"), sep = "_") %>% 
-    left_join(clust_conv, by = "Clust") %>% 
-    select(Family, `Probe pair`, R2, pval, `Detection limit (attomolar)`) %>% 
-    write_csv("probe_stats.csv")
-
-
-#+END_SRC
-
-
-* Re-working of Fig3
-
-#+BEGIN_SRC R :session
-
-
-## clust_conv <- 
-##     read_xlsx("Table_Gates_ProbeTargets.xlsx") %>%
-##     select(Cluster, `Enzyme family`) %>%
-##     filter(complete.cases(.)) %>%
-##     rename(Clust = Cluster,
-##            Family = `Enzyme family`)
-
-## lib10_counts <-
-##     read_csv("lib10.csv") %>%
-##     unique %>%
-##     group_by(Sample_ix, Cluster) %>%
-##     summarise(n=n()) %>%
-##     spread(key=Cluster, value=n, fill=0) %>%
-##     ungroup %>%
-##     mutate(Sample_ix = as.factor(Sample_ix)) %>%
-##     gather(Cluster, Count, -Sample_ix) %>%
-##     mutate(Tube = 10) %>%
-##     select(Tube, Sample_ix, Cluster, Count)
-
-## ## Prepare count table for tube 11
-
-## lib11_counts <-
-##     rbind(
-##         read_csv("lib11_1.csv"),
-##         read_csv("lib11_2.csv")) %>%
-##     unique %>%
-##     group_by(Sample_ix, Cluster) %>%
-##     summarise(n=n()) %>%
-##     spread(key=Cluster, value=n, fill=0) %>%
-##     ungroup %>%
-##     mutate(Sample_ix = as.factor(Sample_ix)) %>%
-##     gather(Cluster, Count, -Sample_ix) %>%
-##     mutate(Tube = 11) %>%
-##     select(Tube, Sample_ix, Cluster, Count)
-
-## ## Merge the count tables
-
-## lib_counts <-
-##     rbind(lib10_counts, lib11_counts) %>%
-##     spread(Cluster, Count, fill=0) %>%
-##     gather(Cluster, Count, -Tube, -Sample_ix)  %>%
-##     spread(Sample_ix, Count, fill=0) %>%
-##     gather(Sample_ix, Count, -Tube, -Cluster)
-
-
-## design <-
-##     read_excel("expanded_libraries.xlsx") %>%
-##     mutate(Entry = 1) %>%
-##     select(Tube, Cluster, Tube, Sample_ix, Entry) %>%
-##     unique %>%
-##     spread(Cluster, Entry, fill=0) %>%
-##     mutate(Sample_ix = as.factor(Sample_ix)) %>%
-##     gather(Cluster, Count, -Sample_ix, -Tube) %>%
-##     mutate(Mask = Count > 0) %>%
-##     select(-Count)
-
-## full_lib <-
-##     left_join(lib_counts,
-##               design,
-##               by=c("Tube", "Sample_ix", "Cluster")) %>%
-##     mutate_if(is.logical, replace_na, FALSE) %>%
-##     mutate(Cluster = as.factor(Cluster))
-
-
-##  conf_mask <-
-##      read_xlsx("cluster_confirmation4.xlsx") %>% 
-##      gather(Cf, Conf, -Sample_ix, -False1, -False2, -False3) %>%
-##      select(-Cf) %>%
-##      gather(Fl, False_pos, -Sample_ix, -Conf) %>%
-##      select(-Fl) %>%
-##      filter(!(is.na(Conf) & is.na(False_pos))) %>%
-##      unique %>%
-##      mutate(Category = case_when(
-##                 !is.na(Conf) ~ 3,
-##                 !is.na(False_pos) ~ 4)) %>%
-##      gather(Type, Clust, -Sample_ix, -Category) %>%
-##      filter(complete.cases(.)) %>%
-##      select(-Type)
-
-##  signal_tbl <- 
-##      full_lib %>% 
-##      filter(Tube == 10) %>% 
-##      filter(!(Sample_ix %in% c(511, 512, 513))) %>%
-##      left_join(t10_dl, by="Cluster") %>%
-##      ungroup %>% 
-##      mutate(Signal = ifelse(Count > ld, 1, 0),
-##             Sample_ix = as.numeric(Sample_ix)) %>% 
-##      separate(Cluster, c("Clust", "Repl"), sep="_") %>%
-##      group_by(Sample_ix, Clust) %>%
-##      mutate(Signal = ifelse(sum(Signal) == 2, 1, 0),
-##             Signal = ifelse(Mask, Signal, -Signal)) %>%
-##      ungroup %>%
-##      mutate(Clust = as.numeric(Clust)) %>%
-##      full_join(conf_mask) %>%
-##      left_join(read_xlsx("sample_conversion.xlsx")) %>%
-##      left_join(clust_conv) %>%
-##      select(-mean_cnt, -sd_cnt, -ld) %>% 
-##      mutate(Sign = case_when(
-##                 Signal == -1 ~ 2,
-##                 is.na(Category) ~ Signal,
-##                 !is.na(Category) ~ Category),
-##             Sign = ifelse(Signal == 0, 0, Sign),
-##             Sign = as.factor(Sign))
-
-##  lib1 <- 
-##      full_lib %>% 
-##      mutate(Count = ifelse(Mask, Count, -Count),
-##             Tube = as.factor(Tube)) %>% 
-##      filter(Tube == 10) %>% 
-##      separate(Cluster, c("Clust", "Repl"), sep="_") %>% 
-##      mutate(Sample_ix = as.numeric(Sample_ix),
-##             Clust = as.numeric(Clust),
-##             Count = abs(Count)) %>%
-##      left_join(read_xlsx("sample_conversion.xlsx")) %>%
-##      left_join(clust_conv, by = "Clust") %>% 
-##      filter(Repl != 3,
-##             Family != "KPC") %>% 
-##      select(Family, Repl, Sample_ID, Count)
-
-##  lib2 <-
-##      signal_tbl %>%
-##      select(Family, Repl, Sample_ID, Sign)
-
-##  left_join(lib1, lib2) %>% 
-##      unite(Fam_rep, Family, Repl, sep=" replicate") %>% 
-##      ggplot(aes(x=Fam_rep, y=Sample_ID)) +
-##      geom_tile(aes(fill=Count, color=Sign), size=1) +
-##      scale_fill_gradient2(low = "blue", high = "red", mid="white") +
-##      theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-##            axis.text.y = element_text(size=5))
-
-
-## full_lib %>% 
-##     filter(Tube == 10) %>% 
-##     filter(!(Sample_ix %in% c(511, 512, 513))) %>%
-##     left_join(t10_dl, by="Cluster") %>%
-##     ungroup %>% 
-##     mutate(Signal = ifelse(Count > ld, 1, 0),
-##            Sample_ix = as.numeric(Sample_ix)) %>% 
-##     separate(Cluster, c("Clust", "Repl"), sep="_")
-
-
-
-
-library(tidyverse)
-library(readxl)
-
-
-lib10_counts <-
-    read_csv("lib10.csv") %>%
-    unique %>%
-    group_by(Sample_ix, Cluster) %>%
-    summarise(n=n()) %>%
-    spread(key=Cluster, value=n, fill=0) %>%
-    ungroup %>%
-    mutate(Sample_ix = as.factor(Sample_ix)) %>%
-    gather(Cluster, Count, -Sample_ix) %>%
-    mutate(Tube = 10) %>%
-    select(Tube, Sample_ix, Cluster, Count)
-
-## Prepare count table for tube 11
-
-lib11_counts <-
-    rbind(
-        read_csv("lib11_1.csv"),
-        read_csv("lib11_2.csv")) %>%
-    unique %>%
-    group_by(Sample_ix, Cluster) %>%
-    summarise(n=n()) %>%
-    spread(key=Cluster, value=n, fill=0) %>%
-    ungroup %>%
-    mutate(Sample_ix = as.factor(Sample_ix)) %>%
-    gather(Cluster, Count, -Sample_ix) %>%
-    mutate(Tube = 11) %>%
-    select(Tube, Sample_ix, Cluster, Count)
-
-lib_counts <-
-    rbind(lib10_counts, lib11_counts) %>%
-    spread(Cluster, Count, fill=0) %>%
-    gather(Cluster, Count, -Tube, -Sample_ix)  %>%
-    spread(Sample_ix, Count, fill=0) %>%
-    gather(Sample_ix, Count, -Tube, -Cluster)
-
-design <-
-    read_excel("expanded_libraries.xlsx") %>%
-    mutate(Entry = 1) %>%
-    select(Tube, Cluster, Tube, Sample_ix, Entry) %>%
-    unique %>%
-    spread(Cluster, Entry, fill=0) %>%
-    mutate(Sample_ix = as.factor(Sample_ix)) %>%
-    gather(Cluster, Count, -Sample_ix, -Tube) %>%
-    mutate(Mask = Count > 0) %>%
-    select(-Count)
-
-full_lib <-
-    left_join(lib_counts,
-              design,
-              by=c("Tube", "Sample_ix", "Cluster")) %>%
-    mutate_if(is.logical, replace_na, FALSE) %>%
-    mutate(Cluster = as.factor(Cluster))
-
-
- t10_dl <- 
-     filter(full_lib, Tube == 10,
-            Sample_ix %in% c(511, 512, 513)) %>%
-     group_by(Cluster) %>% 
-     summarise(mean_cnt = mean(Count, na.rm = TRUE),
-               sd_cnt = sd(Count, na.rm = TRUE),
-               ld = mean_cnt + 3*sd_cnt)
-
-clust_conv <- 
-    read_xlsx("Table_Gates_ProbeTargets.xlsx") %>%
-    select(Cluster, `Enzyme family`) %>%
-    filter(complete.cases(.)) %>%
-    rename(Clust = Cluster,
-           Family = `Enzyme family`) %>% 
-    mutate(Clust = as.character(Clust))
-
-
-sig_tbl <- 
-    left_join(lib_counts, t10_dl, by = "Cluster") %>% 
-    mutate(Signal = ifelse(Count > ld, 1, 0),
-           Signal = as.character(Signal), 
-           Sample_ix = as.numeric(Sample_ix)) %>% 
-    separate(Cluster, c("Clust", "Repl"), sep="_") %>% 
-    left_join(clust_conv) %>% 
-    left_join(read_xlsx("sample_conversion.xlsx")) %>%
-    filter(Repl != 3,
-           Family != "KPC") %>% 
-    select(-mean_cnt, -sd_cnt, -ld, -Tube, -Clust, -Sample_ix) %>% 
-    unite(Fam_rep, Family, Repl, sep=" replicate")
-
-
-ggplot(sig_tbl, aes(x=Fam_rep, y=Sample_ID)) +
-    geom_tile(aes(fill=Count, color=Signal), size=1) +
-    scale_fill_gradient2(low = "blue", high = "red", mid="white") +
-    theme(axis.text.x = element_text(angle=45, hjust=1, size=7),
-           axis.text.y = element_text(size=5))
-ggsave("all_sigs.pdf", last_plot())
-
-
-
-
-#+END_SRC
 
 
 * 3) Session info
@@ -1450,31 +792,3 @@ ggsave("all_sigs.pdf", last_plot())
 
 
 
-* Sampling depth calculation
-
-#+BEGIN_SRC R :session
-
-library(tidyverse)
-
-lib10 <- read_csv("lib10.csv")
-lib11_1 <- read_csv("lib11_1.csv")
-lib11_2 <- read_csv("lib11_2.csv")
-
-bind_rows(lib10, lib11_1, lib11_2)
-
-# This gives 1 826 715 sequences which is about 12% of the total reads (15 148 193).
-
-
-bind_rows(lib10, lib11_1, lib11_2) %>% 
-    count(Sample_ix) %>% 
-    mutate(Read_depth = 12 * n,
-           MiSeq_fraction = 30e6 / Read_depth,
-           NovaSeq_fraction = 20e9 / Read_depth) %>% 
-    arrange(desc(NovaSeq_fraction)) %>% 
-    summarise(MiSeq_mean = mean(MiSeq_fraction),
-              NovaSeq_mean = mean(NovaSeq_fraction))
-
-# This means that the most deeply sampled bc could fit 40 times on an Illumina Reagent Kit v2 run
-
-
-#+END_SRC
