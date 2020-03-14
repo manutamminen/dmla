@@ -169,37 +169,6 @@ Python
  #+END_SRC
 
 
-** Prepare the gdf file from probe_counts.csv
-
-|------------------+--------------|
-| Inputs           | Outputs      |
-|------------------+--------------|
-| probe_counts.csv | clusters.gdf |
-| Allele.tab       |              |
-|------------------+--------------|
-
- #+BEGIN_SRC R :session
- 
- con2 <- read_csv("probe_counts.csv", col_names=FALSE) %>%
-     unite(Netw, X1, X2, sep=",") %>%
-     pull(Netw)
-
- annotation <- read.delim("Allele.tab", sep="\t") %>%
-     separate(allele_name, into=c("type"), sep="-", remove=FALSE) %>%
-     mutate(size = stop - start) %>%
-     select(protein_accession, type, size) %>%
-     with(paste(protein_accession, type, size, sep=","))
-
- gdf <- c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE",
-          annotation,
-          "edgedef>node1 VARCHAR,node2 VARCHAR",
-          con2)
-         
- write(gdf, "clusters.gdf")
-
- #+END_SRC
-
-
 ** Prepare also the gdf such that our primer designs are also shown in the network
 
 *** Start by expanding our probe designs (all_probes.xlsx) into non-degenerate versions
@@ -286,7 +255,8 @@ R
      group_by(Seq) %>%
      summarise(Probes = paste(sort(Name), collapse=";"))
 
- con2 <- read_csv("probe_counts.csv", col_names=FALSE) %>%
+ con <-
+     read_csv("probe_counts.csv", col_names=FALSE) %>%
      unite(Netw, X1, X2, sep=",") %>%
      pull(Netw)
 
@@ -297,22 +267,15 @@ R
      select(protein_accession, type, size) %>%
      left_join(probe_coverage, by=c("protein_accession" = "Seq"))
 
- annotation %>%
-     filter(complete.cases(.),
-            type != "NDM") %>%
-     group_by(Probes) %>%
-     summarise(n=n()) %>%
-     arrange(desc(n)) %>% 
-     data.frame
-    
  gdf_annotation <- 
      annotation %>%
      with(paste(protein_accession, type, size, Probes, sep=","))
 
- gdf <- c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE,probe VARCHAR",
-          gdf_annotation,
-          "edgedef>node1 VARCHAR,node2 VARCHAR",
-          con2)
+ gdf <-
+     c("nodedef>name VARCHAR,type VARCHAR,size DOUBLE,probe VARCHAR",
+       gdf_annotation,
+       "edgedef>node1 VARCHAR,node2 VARCHAR",
+       con)
          
  write(gdf, "clusters.gdf")
  #+END_SRC
@@ -423,7 +386,6 @@ Python
          template_dictionary[seq] = row['Short_name']
 
  sample_id_dict = {bc: bc_id for _, (_, bc_id, bc) in pcr_bcs.iterrows()}
-
  sample_ix_dict = {bc: ix for _, (ix, _, bc) in pcr_bcs.iterrows()}
 
 
@@ -476,7 +438,6 @@ Python
  lib10.to_csv("lib10.csv", index=False)
  lib11_1.to_csv("lib11_1.csv", index=False)
  lib11_2.to_csv("lib11_2.csv", index=False)
-
  #+END_SRC
 
  
@@ -647,6 +608,21 @@ R
      filter(complete.cases(.)) %>%
      select(-Type)
 
+ lib1 <- 
+     full_lib %>% 
+     mutate(Count = ifelse(Mask, Count, -Count),
+            Tube = as.factor(Tube)) %>% 
+     filter(Tube == 10) %>% 
+     separate(Cluster, c("Clust", "Repl"), sep="_") %>% 
+     mutate(Sample_ix = as.numeric(Sample_ix),
+            Clust = as.numeric(Clust),
+            Count = abs(Count)) %>%
+     left_join(read_xlsx("sample_conversion.xlsx")) %>%
+     left_join(clust_conv) %>% 
+     filter(Repl != 3,
+            Family != "KPC") %>% 
+     select(Family, Repl, Sample_ID, Count)
+ 
  signal_tbl <- 
      full_lib %>% 
      filter(Tube == 10) %>% 
@@ -664,7 +640,6 @@ R
      full_join(conf_mask) %>%
      left_join(read_xlsx("sample_conversion.xlsx")) %>%
      left_join(clust_conv) %>%
-     select(-mean_cnt, -sd_cnt, -ld) %>% 
      mutate(Sign = case_when(
                 Signal == -1 ~ 2,
                 is.na(Category) ~ Signal,
@@ -672,48 +647,7 @@ R
             Sign = ifelse(Signal == 0, 0, Sign),
             Sign = as.factor(Sign))
 
- lib1 <- 
-     full_lib %>% 
-     mutate(Count = ifelse(Mask, Count, -Count),
-            Tube = as.factor(Tube)) %>% 
-     filter(Tube == 10) %>% 
-     separate(Cluster, c("Clust", "Repl"), sep="_") %>% 
-     mutate(Sample_ix = as.numeric(Sample_ix),
-            Clust = as.numeric(Clust),
-            Count = abs(Count)) %>%
-     left_join(read_xlsx("sample_conversion.xlsx")) %>%
-     left_join(clust_conv) %>% 
-     filter(Repl != 3,
-            Family != "KPC") %>% 
-     select(Family, Repl, Sample_ID, Count)
-
-
- 
- signal_tbl2 <- 
-     full_lib %>% 
-     filter(Tube == 10) %>% 
-     filter(!(Sample_ix %in% c(511, 512, 513))) %>%
-     left_join(t10_dl, by="Cluster") %>%
-     ungroup %>% 
-     mutate(Signal = ifelse(Count > ld, 1, 0),
-            Sample_ix = as.numeric(Sample_ix)) %>% 
-     separate(Cluster, c("Clust", "Repl"), sep="_") %>%
-     group_by(Sample_ix, Clust) %>%
-     mutate(Signal = ifelse(sum(Signal) == 2, 1, 0),
-            Signal = ifelse(Mask, Signal, -Signal)) %>%
-     ungroup %>%
-     mutate(Clust = as.numeric(Clust)) %>%
-     full_join(conf_mask) %>%
-     left_join(read_xlsx("sample_conversion.xlsx")) %>%
-     left_join(clust_conv) %>%
-     mutate(Sign = case_when(
-                Signal == -1 ~ 2,
-                is.na(Category) ~ Signal,
-                !is.na(Category) ~ Category),
-            Sign = ifelse(Signal == 0, 0, Sign),
-            Sign = as.factor(Sign))
-
- left_join(lib1, signal_tbl2) %>% 
+ left_join(lib1, signal_tbl) %>% 
      unite(Fam_rep, Family, Repl, sep=" replicate") %>% 
      mutate(Signal = abs(Signal)) %>% 
      ggplot(aes(x=Sample_ID, y=Count, fill = Signal)) +
