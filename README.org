@@ -451,7 +451,7 @@ Python
 
 Python
 
-#+BEGIN_SRC ipython :session
+#+BEGIN_SRC python :session
 import os
 import epride as ep
 import pandas as pd
