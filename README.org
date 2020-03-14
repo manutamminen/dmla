@@ -675,7 +675,7 @@ R
 
 
 
-* 3) Session info
+* Session info
 
 ** Python version 3.6.7 | packaged by conda-forge | (default, Feb 25 2019, 20:30:30)
 
