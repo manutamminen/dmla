@@ -13,6 +13,7 @@
  | sample_conversion.xlsx        | Annotation for Figures 3 and S01                  |
  | cluster_confirmation.xlsx     | Annotation for Figures 3 and S01                  |
 
+ The sequence data is available at https://www.ncbi.nlm.nih.gov/bioproject/PRJNA531165
 
 
 * Figure 2
