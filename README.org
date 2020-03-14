@@ -622,6 +622,10 @@ R
      filter(Repl != 3,
             Family != "KPC") %>% 
      select(Family, Repl, Sample_ID, Count)
+
+lib2 <-
+    signal_tbl %>%
+    select(Family, Repl, Sample_ID, Sign)
  
  signal_tbl <- 
      full_lib %>% 
