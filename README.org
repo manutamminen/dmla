@@ -2,14 +2,16 @@
 
 ** Data files
 
- | File                    | Content                                  |
- |-------------------------+------------------------------------------|
- | Allele-dna.fa           | Reference sequences                      |
- | Allele.tab              | Sequence annotation                      |
- | all_probes.xlsx         | Probe, template and primer sequences     |
- | libraries.xlsx          | Annotation for Figures 3 and S01         |
- | mol_bc_counts.tar.gz    | Molecular counts from the sequence files |
- | probes.xlsx             | Probe, template and primer sequences     |
+ | File                          | Content                                           |
+ |-------------------------------+---------------------------------------------------|
+ | Allele-dna.fa                 | Reference sequences                               |
+ | Allele.tab                    | Sequence annotation                               |
+ | all_probes.xlsx               | Probe, template and primer sequences for Figure 2 |
+ | probes.xlsx                   | Probe, template and primer sequences for Figure 3 |
+ | libraries.xlsx                | Annotation for Figures 3 and S01                  |
+ | Table_Gates_Probetargets.xlsx | Annotation for Figures 3 and S01                  |
+ | sample_conversion.xlsx        | Annotation for Figures 3 and S01                  |
+ | cluster_confirmation.xlsx     | Annotation for Figures 3 and S01                  |
 
 
 
